@@ -71,6 +71,10 @@ try {
   assert.equal((await json("/api/v1/admin/feedback", { headers: adminHeaders })).response.status, 200);
   assert.equal((await fetch(`${apiOrigin}/api/v1/admin/attachments/${upload.body.attachment.id}`, { headers: codexHeaders })).status, 200);
   assert.equal((await json(`/api/v1/admin/feedback/${ticket.body.feedback.public_id}`, { method: "PATCH", headers: { ...codexHeaders, "content-type": "application/json" }, body: JSON.stringify({ status: "to_analyze" }) })).response.status, 403);
+  const outsideScope = await json("/api/v1/admin/feedback?app_id=perfect-tap", { headers: codexHeaders });
+  assert.equal(outsideScope.response.status, 200);
+  assert.deepEqual(outsideScope.body.feedback, []);
+  assert.equal((await json(`/api/v1/admin/feedback/${ticket.body.feedback.public_id}`, { method: "PATCH", headers: { ...adminHeaders, "content-type": "application/json" }, body: JSON.stringify({ status: "to_analyze" }) })).response.status, 200);
   assert.equal((await json("/api/v1/admin/logs", { headers: codexHeaders })).response.status, 200);
   console.log(JSON.stringify({ event: "integration_complete", status: "ok" }));
 } finally {

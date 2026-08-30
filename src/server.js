@@ -202,7 +202,7 @@ const server = createServer(async (request, response) => {
       const input = await readJson(request), current = await pool.query("SELECT f.id,f.status,i.game_slug AS app_id FROM feedback f JOIN installations i ON i.id=f.installation_id WHERE f.public_id=$1", [ticketMatch[1]]);
       if (!current.rowCount || !serviceCanAccessApp(actor, current.rows[0].app_id)) { status = 404; return reply(response, status, { error: "feedback_not_found" }, origin); }
       if (!validateStatusTransition(current.rows[0].status, input.status)) { status = 409; return reply(response, status, { error: "status_transition_invalid" }, origin); }
-      const updated = await pool.query("UPDATE feedback SET status=$2,updated_at=now(),closed_at=CASE WHEN $2='closed' THEN now() ELSE NULL END WHERE id=$1 RETURNING public_id,status,updated_at", [current.rows[0].id, input.status]);
+      const updated = await pool.query("UPDATE feedback SET status=$2::varchar(24),updated_at=now(),closed_at=CASE WHEN $2::text='closed' THEN now() ELSE NULL END WHERE id=$1 RETURNING public_id,status,updated_at", [current.rows[0].id, input.status]);
       await pool.query("INSERT INTO feedback_status_history(feedback_id,from_status,to_status,changed_by,note) VALUES($1,$2,$3,$4,$5)", [current.rows[0].id, current.rows[0].status, input.status, actor.name, typeof input.note === "string" ? input.note.slice(0, 1000) : null]);
       await audit(actor, "feedback.status_update", "feedback", ticketMatch[1], { from: current.rows[0].status, to: input.status }); status = 200; return reply(response, status, { feedback: updated.rows[0] }, origin);
     }
