@@ -8,22 +8,29 @@ import pg from "pg";
 import { hashToken } from "../src/domain.js";
 
 const adminUrl = process.env.TEST_DATABASE_URL || "postgresql://postgres:postgres@127.0.0.1:5432/app_platform_test";
+const parsedAdminUrl = new URL(adminUrl);
+const databaseHost = parsedAdminUrl.hostname;
+const databasePort = parsedAdminUrl.port || "5432";
+const databaseName = decodeURIComponent(parsedAdminUrl.pathname.slice(1));
+const databaseUser = decodeURIComponent(parsedAdminUrl.username);
+const databasePassword = decodeURIComponent(parsedAdminUrl.password);
+const apiPort = process.env.TEST_API_PORT || "3100";
+const apiOrigin = `http://127.0.0.1:${apiPort}`;
 const runtimePassword = "runtime-integration-only";
-const runtimeUrl = `postgresql://miniapps_api:${runtimePassword}@127.0.0.1:5432/app_platform_test`;
 const directory = await mkdtemp(join(tmpdir(), "app-platform-integration-"));
 const admin = new pg.Client({ connectionString: adminUrl });
 let server;
 
 async function waitForHealth() {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    try { const response = await fetch("http://127.0.0.1:3100/api/health"); if (response.ok) return; } catch {}
+    try { const response = await fetch(`${apiOrigin}/api/health`); if (response.ok) return; } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("integration server did not become healthy");
 }
 
 async function json(path, init = {}) {
-  const response = await fetch(`http://127.0.0.1:3100${path}`, init);
+  const response = await fetch(`${apiOrigin}${path}`, init);
   const body = await response.json().catch(() => ({}));
   return { response, body };
 }
@@ -31,7 +38,7 @@ async function json(path, init = {}) {
 try {
   await admin.connect();
   await admin.query(`CREATE ROLE miniapps_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '${runtimePassword}'`);
-  await admin.query("GRANT CONNECT ON DATABASE app_platform_test TO miniapps_api; GRANT USAGE ON SCHEMA public TO miniapps_api");
+  await admin.query(`GRANT CONNECT ON DATABASE ${pg.escapeIdentifier(databaseName)} TO miniapps_api; GRANT USAGE ON SCHEMA public TO miniapps_api`);
   await admin.query("CREATE TABLE schema_migrations(filename text PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())");
   await admin.query(await readFile(new URL("../migrations/001_initial.sql", import.meta.url), "utf8"));
   await admin.query("INSERT INTO schema_migrations(filename) VALUES('001_initial.sql')");
@@ -39,7 +46,7 @@ try {
   await admin.query("INSERT INTO installations(id,game_slug,token_hash,client_version) VALUES($1,'perfect-tap',$2,'0.2.0')", [legacyInstallation, "f".repeat(64)]);
   await admin.query("INSERT INTO feedback(installation_id,type,comment,status) VALUES($1,'like','','check')", [legacyInstallation]);
   await new Promise((resolve, reject) => {
-    const migration = spawn(process.execPath, ["src/migrate.js"], { stdio: "inherit", env: { ...process.env, PGHOST: "127.0.0.1", PGPORT: "5432", PGDATABASE: "app_platform_test", PGUSER: "postgres", PGPASSWORD: "postgres" } });
+    const migration = spawn(process.execPath, ["src/migrate.js"], { stdio: "inherit", env: { ...process.env, PGHOST: databaseHost, PGPORT: databasePort, PGDATABASE: databaseName, PGUSER: databaseUser, PGPASSWORD: databasePassword } });
     migration.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`migration exited ${code}`)));
   });
   const converted = await admin.query("SELECT type,status,title FROM feedback WHERE installation_id=$1", [legacyInstallation]);
@@ -49,9 +56,9 @@ try {
 
   const adminToken = randomBytes(48).toString("base64url"), codexToken = randomBytes(48).toString("base64url");
   await admin.query("INSERT INTO service_accounts(name,token_hash,scopes,app_ids) VALUES('integration-admin',$1,$2,NULL),('codex-reader',$3,$4,ARRAY['minigames-hub'])", [hashToken(adminToken), ["apps:read","apps:write","feedback:read","feedback:write","attachments:read","attachments:delete","logs:read"], hashToken(codexToken), ["apps:read","feedback:read","attachments:read","logs:read"]]);
-  server = spawn(process.execPath, ["src/server.js"], { stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, PGHOST: "127.0.0.1", PGPORT: "5432", PGDATABASE: "app_platform_test", PGUSER: "miniapps_api", PGPASSWORD: runtimePassword, PORT: "3100", ATTACHMENTS_DIR: directory, CORS_ALLOWED_ORIGINS: "http://localhost" } });
+  server = spawn(process.execPath, ["src/server.js"], { stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, PGHOST: databaseHost, PGPORT: databasePort, PGDATABASE: databaseName, PGUSER: "miniapps_api", PGPASSWORD: runtimePassword, PORT: apiPort, ATTACHMENTS_DIR: directory, CORS_ALLOWED_ORIGINS: "http://localhost" } });
   await waitForHealth();
-  assert.equal((await fetch("http://127.0.0.1:3100/admin")).status, 200);
+  assert.equal((await fetch(`${apiOrigin}/admin`)).status, 200);
   const installation = await json("/api/v1/installations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app_id: "minigames-hub", client_version: "0.1.0" }) });
   assert.equal(installation.response.status, 201);
   const auth = { authorization: `Bearer ${installation.body.token}` };
@@ -62,7 +69,7 @@ try {
   assert.equal(upload.response.status, 201);
   const adminHeaders = { authorization: `Bearer ${adminToken}` }, codexHeaders = { authorization: `Bearer ${codexToken}` };
   assert.equal((await json("/api/v1/admin/feedback", { headers: adminHeaders })).response.status, 200);
-  assert.equal((await fetch(`http://127.0.0.1:3100/api/v1/admin/attachments/${upload.body.attachment.id}`, { headers: codexHeaders })).status, 200);
+  assert.equal((await fetch(`${apiOrigin}/api/v1/admin/attachments/${upload.body.attachment.id}`, { headers: codexHeaders })).status, 200);
   assert.equal((await json(`/api/v1/admin/feedback/${ticket.body.feedback.public_id}`, { method: "PATCH", headers: { ...codexHeaders, "content-type": "application/json" }, body: JSON.stringify({ status: "to_analyze" }) })).response.status, 403);
   assert.equal((await json("/api/v1/admin/logs", { headers: codexHeaders })).response.status, 200);
   console.log(JSON.stringify({ event: "integration_complete", status: "ok" }));
