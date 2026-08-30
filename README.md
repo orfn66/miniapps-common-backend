@@ -1,6 +1,6 @@
 # App Platform V1 (évolution du Mini-apps Common Backend)
 
-Backend pilote commun des mini-jeux. Il est déployé par Coolify avec uniquement des données de validation non sensibles.
+Backend commun de l’App Platform, déployé par Coolify avec uniquement des données de validation non sensibles pendant la période pilote.
 
 La migration `002_app_platform_feedback.sql` prépare sa généralisation en App Platform transversale : registre d’applications, workflow complet, interface `/admin`, pièces jointes privées, comptes de service à scopes et contrat `openapi.yaml`. Le pilote produit est `minigames-hub`; les jeux comme Perfect Tap restent des modules internes.
 
@@ -21,13 +21,13 @@ Variables Coolify nécessaires, sans valeur dans Git :
 | `APP_DB_PASSWORD` | authentification du rôle runtime limité `miniapps_api` |
 | `CORS_ALLOWED_ORIGINS` | liste séparée par des virgules des origines frontend autorisées |
 
-Le volume `miniapps_attachments` stocke les captures privées. Il n’est exposé par aucun port et doit être inclus dans Restic avant collecte réelle.
+Le volume `miniapps_attachments` stocke les captures privées. Il n’est exposé par aucun port et est inclus dans les sauvegardes Restic chiffrées.
 
 Les mots de passe production et preview sont indépendants. Ils sont gérés dans Coolify et ne doivent jamais être affichés, copiés dans Git ou transmis au client.
 
-## Fonctions du prototype
+## Fonctions de la V1
 
-- registre des jeux avec `Perfect Tap` comme pilote ;
+- registry transversal avec `MiniGames Hub` comme pilote ; Perfect Tap reste un module interne ;
 - création d'une installation pseudonyme et émission unique de son jeton ;
 - stockage du jeton sous forme SHA-256 uniquement ;
 - feedback, sessions de jeu idempotentes et statistiques personnelles ;
@@ -42,6 +42,8 @@ npm ci
 npm test
 node --check src/server.js
 ```
+
+Le standard pour enregistrer et intégrer une application est décrit dans `INTEGRATION_STANDARD.md`. Un smoke test non destructif de la préproduction est disponible avec `npm run test:preprod`; il exige les URLs et jetons via variables d’environnement et ne les affiche jamais.
 
 Pour un test Docker, copier `.env.example` vers `.env`, remplacer les valeurs par des secrets aléatoires indépendants, puis exécuter :
 
@@ -58,6 +60,7 @@ La configuration n'expose volontairement aucun port hôte. Un test HTTP local n�
 - création d'installation, feedback, session idempotente et statistiques validés via HTTPS ;
 - origine CORS autorisée acceptée et origine étrangère refusée ;
 - dump local restauré dans une base distincte avec les trois lignes attendues ;
-- monitoring horaire actif.
+- monitoring horaire actif pour l’API, l’admin et le Hub pilote ;
+- sauvegarde Restic et restauration isolée d’une pièce jointe et du dump PostgreSQL validées.
 
-La sauvegarde reste locale et n'est pas une vraie sauvegarde externe. Aucun frontend réel ne doit envoyer de données importantes avant activation de cette protection externe et validation de son origine CORS.
+L’URL `sslip.io` reste une préproduction temporaire. Aucun domaine réel ne doit être ajouté avant la décision de conserver le VPS et une validation DNS séparée.

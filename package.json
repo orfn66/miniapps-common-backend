@@ -12,7 +12,8 @@
     "service-account:create": "node src/create-service-account.js",
     "attachments:purge": "node src/purge-attachments.js",
     "test": "node --test test/domain.test.js",
-    "test:integration": "node test/integration.mjs"
+    "test:integration": "node test/integration.mjs",
+    "test:preprod": "node scripts/smoke-preprod.mjs"
   },
   "dependencies": {
     "pg": "8.23.0"
