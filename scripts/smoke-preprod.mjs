@@ -71,7 +71,7 @@ const outsideScope = await json("/api/v1/admin/feedback?app_id=perfect-tap", cod
 assert.equal(outsideScope.response.status, 200);
 assert.deepEqual(outsideScope.body.feedback, []);
 
-const ticket = codexTickets.body.feedback[0];
+const ticket = codexTickets.body.feedback.find(item => item.attachment_count > 0) || codexTickets.body.feedback[0];
 assert.ok(ticket, `No feedback exists for ${pilotAppId}`);
 const detail = await json(`/api/v1/admin/feedback/${ticket.public_id}`, codexHeaders);
 assert.equal(detail.response.status, 200);
