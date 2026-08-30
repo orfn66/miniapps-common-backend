@@ -1,0 +1,82 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: platform_admin
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_DB: miniapps
+    volumes:
+      - miniapps_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform_admin -d miniapps"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  db-init:
+    image: postgres:17-alpine
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: miniapps
+      PGUSER: platform_admin
+      PGPASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        psql --set=ON_ERROR_STOP=1 --set=app_password="$$APP_DB_PASSWORD" <<'SQL'
+        SELECT format(
+          'CREATE ROLE miniapps_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD %L',
+          :'app_password'
+        )
+        WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'miniapps_api') \gexec
+        ALTER ROLE miniapps_api PASSWORD :'app_password';
+        GRANT CONNECT ON DATABASE miniapps TO miniapps_api;
+        GRANT USAGE ON SCHEMA public TO miniapps_api;
+        SQL
+
+  migrate:
+    build: .
+    restart: "no"
+    command: ["node", "src/migrate.js"]
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: miniapps
+      PGUSER: platform_admin
+      PGPASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: miniapps
+      PGUSER: miniapps_api
+      PGPASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?set CORS_ALLOWED_ORIGINS}
+      PORT: "3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "src/healthcheck.js"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+volumes:
+  miniapps_pg_data:
