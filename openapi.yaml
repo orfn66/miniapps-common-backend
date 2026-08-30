@@ -2,6 +2,31 @@ openapi: 3.1.0
 info: {title: App Platform Feedback API, version: 1.0.0}
 servers: [{url: https://platform.example.invalid/api/v1}]
 paths:
+  /auth/session:
+    get:
+      summary: Session humaine courante et jeton CSRF (même origine)
+      responses: {'200': {description: Session valide}, '401': {description: Non connecté}}
+  /auth/setup:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Activation unique e-mail/mot de passe (jeton admin complet uniquement)
+      description: Origine HTTPS exacte obligatoire. JSON email et password (15 à 128 caractères). Émet un cookie HttpOnly sécurisé, jamais de mot de passe dans la réponse.
+      responses: {'201': {description: Accès activé}, '400': {description: Entrée invalide}, '403': {description: Jeton admin ou origine refusés}, '409': {description: Accès déjà configuré}, '429': {description: Trop de tentatives}}
+  /auth/login:
+    post:
+      summary: Connexion humaine avec e-mail et mot de passe
+      description: Origine HTTPS exacte obligatoire. JSON email et password. Cookie HttpOnly de 12 heures et jeton CSRF dans la réponse.
+      responses: {'200': {description: Connecté}, '401': {description: Identifiants invalides}, '403': {description: Origine refusée}, '429': {description: Trop de tentatives}}
+  /auth/logout:
+    post:
+      summary: Révoque la session courante
+      description: Cookie de session, origine exacte et en-tête X-CSRF-Token obligatoires.
+      responses: {'200': {description: Déconnecté}, '403': {description: Origine ou CSRF refusé}}
+  /auth/password:
+    post:
+      summary: Change le mot de passe et révoque toutes les anciennes sessions
+      description: Cookie, origine exacte et X-CSRF-Token obligatoires. JSON current_password et password.
+      responses: {'200': {description: Mot de passe changé et nouvelle session}, '400': {description: Nouveau mot de passe invalide}, '401': {description: Session ou mot de passe actuel invalides}, '403': {description: CSRF refusé}, '409': {description: Modification concurrente}, '429': {description: Trop de tentatives}}
   /apps:
     get: {summary: Liste des applications actives, responses: {'200': {description: OK}}}
   /installations:

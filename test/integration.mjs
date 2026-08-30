@@ -14,6 +14,7 @@ const databasePort = parsedAdminUrl.port || "5432";
 const databaseName = decodeURIComponent(parsedAdminUrl.pathname.slice(1));
 const databaseUser = decodeURIComponent(parsedAdminUrl.username);
 const databasePassword = decodeURIComponent(parsedAdminUrl.password);
+if (!['127.0.0.1','localhost'].includes(databaseHost) || !databaseName.startsWith('app_platform_')) throw new Error('Integration tests require an isolated local app_platform_* database');
 const apiPort = process.env.TEST_API_PORT || "3100";
 const apiOrigin = `http://127.0.0.1:${apiPort}`;
 const runtimePassword = "runtime-integration-only";
@@ -37,7 +38,9 @@ async function json(path, init = {}) {
 
 try {
   await admin.connect();
-  await admin.query(`CREATE ROLE miniapps_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '${runtimePassword}'`);
+  if (!(await admin.query("SELECT 1 FROM pg_roles WHERE rolname='miniapps_api'")).rowCount) {
+    await admin.query(`CREATE ROLE miniapps_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '${runtimePassword}'`);
+  }
   await admin.query(`GRANT CONNECT ON DATABASE ${pg.escapeIdentifier(databaseName)} TO miniapps_api; GRANT USAGE ON SCHEMA public TO miniapps_api`);
   await admin.query("CREATE TABLE schema_migrations(filename text PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())");
   await admin.query(await readFile(new URL("../migrations/001_initial.sql", import.meta.url), "utf8"));
@@ -76,6 +79,64 @@ try {
   assert.deepEqual(outsideScope.body.feedback, []);
   assert.equal((await json(`/api/v1/admin/feedback/${ticket.body.feedback.public_id}`, { method: "PATCH", headers: { ...adminHeaders, "content-type": "application/json" }, body: JSON.stringify({ status: "to_analyze" }) })).response.status, 200);
   assert.equal((await json("/api/v1/admin/logs", { headers: codexHeaders })).response.status, 200);
+
+  // Password authentication is additive: setup needs a full unrestricted admin bearer.
+  const authOrigin = `https://127.0.0.1:${apiPort}`;
+  const password = 'Isolated test passphrase 2026!';
+  const loginInput = {email:'Test.Admin@example.invalid',password};
+  const authPost = (action, body, extra={}) => json(`/api/v1/auth/${action}`, {
+    method:'POST',headers:{origin:authOrigin,'content-type':'application/json',...extra},body:JSON.stringify(body),
+  });
+  assert.equal((await fetch(`${apiOrigin}/`,{redirect:'manual'})).headers.get('location'), '/admin');
+  assert.equal((await authPost('setup',loginInput)).response.status,403);
+  assert.equal((await authPost('setup',loginInput,codexHeaders)).response.status,403);
+  assert.equal((await authPost('setup',loginInput,{...adminHeaders,origin:'https://hostile.example'})).response.status,403);
+  assert.equal((await authPost('setup',{...loginInput,password:'short'},adminHeaders)).response.status,400);
+  const setup = await authPost('setup',loginInput,adminHeaders);
+  assert.equal(setup.response.status,201);
+  const setupCookieHeader = setup.response.headers.get('set-cookie');
+  for (const flag of ['Secure','HttpOnly','SameSite=Strict','Path=/','Max-Age=43200']) assert.ok(setupCookieHeader.includes(flag));
+  assert.ok(setupCookieHeader.startsWith('__Host-'));
+  assert.equal(setupCookieHeader.includes('Domain='),false);
+  const setupCookie = setupCookieHeader.split(';')[0];
+  assert.equal((await authPost('setup',loginInput,adminHeaders)).response.status,409);
+  assert.equal((await authPost('login',{...loginInput,password:'incorrect'})).response.status,401);
+  assert.equal((await authPost('login',{email:'unknown@example.invalid',password})).response.status,401);
+  const login = await authPost('login',{...loginInput,email:'test.admin@example.invalid'});
+  assert.equal(login.response.status,200);
+  const loginCookie = login.response.headers.get('set-cookie').split(';')[0];
+  assert.notEqual(loginCookie,setupCookie);
+  const session = await json('/api/v1/auth/session',{headers:{cookie:loginCookie}});
+  assert.equal(session.response.status,200);
+  assert.equal(session.body.email,'test.admin@example.invalid');
+  assert.equal((await json('/api/v1/admin/feedback',{headers:{cookie:loginCookie}})).response.status,200);
+  assert.equal((await fetch(`${apiOrigin}/api/v1/admin/attachments/${upload.body.attachment.id}`,{headers:{cookie:loginCookie}})).status,200);
+  assert.equal((await json('/api/v1/admin/feedback',{headers:{cookie:loginCookie,authorization:'Bearer invalid'}})).response.status,401);
+  const cookiePatch = headers => json(`/api/v1/admin/feedback/${ticket.body.feedback.public_id}`,{method:'PATCH',headers:{cookie:loginCookie,'content-type':'application/json',...headers},body:JSON.stringify({status:'confirmed'})});
+  assert.equal((await cookiePatch({origin:authOrigin})).response.status,403);
+  assert.equal((await cookiePatch({origin:'https://hostile.example','x-csrf-token':login.body.csrf_token})).response.status,403);
+  assert.equal((await cookiePatch({origin:authOrigin,'x-csrf-token':login.body.csrf_token})).response.status,200);
+  assert.equal((await authPost('logout',{}, {cookie:loginCookie})).response.status,403);
+  assert.equal((await authPost('logout',{}, {cookie:loginCookie,'x-csrf-token':login.body.csrf_token})).response.status,200);
+  assert.equal((await json('/api/v1/auth/session',{headers:{cookie:loginCookie}})).response.status,401);
+
+  const newPassword = 'A different isolated passphrase 2026!';
+  assert.equal((await authPost('password',{current_password:'wrong',password:newPassword},{cookie:setupCookie,'x-csrf-token':setup.body.csrf_token})).response.status,401);
+  const changed = await authPost('password',{current_password:password,password:newPassword},{cookie:setupCookie,'x-csrf-token':setup.body.csrf_token});
+  assert.equal(changed.response.status,200);
+  assert.equal((await json('/api/v1/auth/session',{headers:{cookie:setupCookie}})).response.status,401);
+  assert.equal((await authPost('login',loginInput)).response.status,401);
+  const newLogin = await authPost('login',{...loginInput,password:newPassword});
+  assert.equal(newLogin.response.status,200);
+  const newCookie = newLogin.response.headers.get('set-cookie').split(';')[0];
+  await admin.query("UPDATE service_accounts SET active=false WHERE name='integration-admin'");
+  assert.equal((await json('/api/v1/auth/session',{headers:{cookie:newCookie}})).response.status,401);
+  await admin.query("UPDATE service_accounts SET active=true WHERE name='integration-admin'");
+  await admin.query("UPDATE admin_sessions SET expires_at=now()-interval '1 second'");
+  assert.equal((await json('/api/v1/auth/session',{headers:{cookie:newCookie}})).response.status,401);
+  assert.equal((await json('/api/v1/admin/feedback',{headers:adminHeaders})).response.status,200);
+  await admin.query("UPDATE admin_auth_budget SET attempts=20,started_at=now()");
+  assert.equal((await authPost('login',{...loginInput,password:newPassword})).response.status,429);
   console.log(JSON.stringify({ event: "integration_complete", status: "ok" }));
 } finally {
   if (server) { server.kill("SIGTERM"); await new Promise((resolve) => server.once("exit", resolve)); }

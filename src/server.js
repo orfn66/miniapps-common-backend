@@ -5,6 +5,7 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
+import { createPasswordAuth, sessionMutationAllowed } from "./password-auth.js";
 import { hashToken, issueInstallationCredential, validateApplication, validateFeedback, validateInstallation, validatePlaySession, validateStatusTransition } from "./domain.js";
 
 const { Pool } = pg;
@@ -36,7 +37,7 @@ async function readBinary(request, maximum = 5_242_880) {
   if (!length) throw new Error("input_invalid");
   return Buffer.concat(chunks);
 }
-async function authenticate(request) {
+async function authenticateBearer(request) {
   const match = /^Bearer ([A-Za-z0-9_-]{40,128})$/.exec(request.headers.authorization || "");
   if (!match) return null;
   const tokenHash = hashToken(match[1]);
@@ -46,6 +47,11 @@ async function authenticate(request) {
   return service.rowCount ? { kind: "service", ...service.rows[0] } : null;
 }
 const requireService = (actor, scope) => actor?.kind === "service" && actor.scopes.includes(scope);
+const passwordAuth = createPasswordAuth({ pool, readJson, reply, authenticateBearer });
+async function authenticate(request) {
+  // An explicitly supplied invalid Bearer must never silently fall back to cookies.
+  return request.headers.authorization ? authenticateBearer(request) : passwordAuth.sessionActor(request);
+}
 const serviceCanAccessApp = (actor, appId) => actor.app_ids === null || actor.app_ids.includes(appId);
 function rateAllowed(key, maximum = 60) {
   const now = Date.now(), current = rateWindows.get(key);
@@ -101,6 +107,11 @@ async function sendAdminAsset(response, pathname) {
 const server = createServer(async (request, response) => {
   const startedAt = Date.now(), url = new URL(request.url, "http://localhost"), origin = request.headers.origin || ""; let status = 500;
   try {
+    const authStatus = await passwordAuth.handle(request, response, url);
+    if (authStatus !== null) { status = authStatus; return; }
+    if (request.method === 'GET' && url.pathname === '/') {
+      status = 302; response.writeHead(status, { ...headers('text/plain'), location: '/admin' }); return response.end();
+    }
     if (!originAllowed(request, origin)) { status = 403; return reply(response, status, { error: "origin_not_allowed" }); }
     if (request.method === "OPTIONS") {
       status = 204; response.writeHead(status, { "access-control-allow-origin": origin, "access-control-allow-headers": "authorization, content-type, idempotency-key, x-attachment-consent, x-file-name", "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS", "access-control-max-age": "600" }); return response.end();
@@ -126,6 +137,9 @@ const server = createServer(async (request, response) => {
 
     const actor = await authenticate(request);
     if (!actor) { status = 401; return reply(response, status, { error: "unauthorized" }, origin); }
+    if (actor.session_hash && !['GET','HEAD','OPTIONS'].includes(request.method) && !sessionMutationAllowed(request)) {
+      status = 403; return reply(response, status, { error: 'csrf_invalid' }, origin);
+    }
     if (!rateAllowed(`${actor.kind}:${actor.id}`, actor.kind === "service" ? 300 : 60)) { status = 429; return reply(response, status, { error: "rate_limited" }, origin); }
 
     if (request.method === "POST" && url.pathname === "/api/v1/feedback" && actor.kind === "installation") {

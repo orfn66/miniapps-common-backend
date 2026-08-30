@@ -2,8 +2,26 @@
 <html lang="fr">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Platform — Feedback</title><link rel="stylesheet" href="/admin/style.css"></head>
 <body>
-  <header><div><p>APP PLATFORM</p><h1>Feedback centralisé</h1></div><button id="auth">Configurer l’accès</button></header>
+  <header><div><p>APP PLATFORM</p><h1>Feedback centralisé</h1></div><div class="account-actions"><span id="account-email"></span><button id="password-button" hidden>Changer le mot de passe</button><button id="logout" hidden>Se déconnecter</button><button id="auth">Accès par jeton</button></div></header>
   <main>
+    <section id="login-panel" class="login-panel">
+      <h2>Connexion administrateur</h2>
+      <p>Utilisez votre adresse e-mail et votre mot de passe App Platform, jamais le mot de passe de votre messagerie.</p>
+      <form id="login-form">
+        <label>Adresse e-mail<input name="email" type="email" autocomplete="username" maxlength="254" required></label>
+        <label>Mot de passe<input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+        <div id="setup-fields" hidden>
+          <label>Confirmer le mot de passe<input name="confirmation" type="password" autocomplete="new-password" maxlength="128"></label>
+          <label>Jeton administrateur existant<input name="admin_token" type="password" autocomplete="off"></label>
+          <p>Activation unique : choisissez un mot de passe d’au moins 15 caractères et fournissez le jeton administrateur du coffre local. Aucun e-mail n’est envoyé.</p>
+        </div>
+        <button id="login-submit" type="submit">Se connecter</button>
+      </form>
+      <p id="login-notice" role="status"></p>
+      <button id="setup-toggle" class="text-button" type="button">Première connexion : définir mon mot de passe</button>
+      <p class="help">Mot de passe oublié ? Utilisez l’accès par jeton de secours et contactez l’administrateur. Il n’y a pas encore de réinitialisation par e-mail.</p>
+    </section>
+    <div id="workspace" hidden>
     <section class="summary"><article><span>Applications</span><strong id="app-count">—</strong></article><article><span>Tickets visibles</span><strong id="ticket-count">—</strong></article><article><span>Nouveaux</span><strong id="new-count">—</strong></article></section>
     <form id="filters" class="filters">
       <label>Application<select name="app_id"><option value="">Toutes</option></select></label>
@@ -15,7 +33,9 @@
     </form>
     <p id="notice" role="status">Configurez un jeton de service limité pour charger les tickets.</p>
     <section id="tickets" class="tickets" aria-live="polite"></section>
+    </div>
   </main>
+  <dialog id="password-dialog"><button class="close" aria-label="Fermer">×</button><h2>Changer le mot de passe</h2><form id="password-form"><label>Mot de passe actuel<input name="current_password" type="password" autocomplete="current-password" required></label><label>Nouveau mot de passe (15 caractères minimum)<input name="password" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label><label>Confirmer<input name="confirmation" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label><button type="submit">Enregistrer et fermer les autres sessions</button></form><p id="password-notice" role="status"></p></dialog>
   <dialog id="detail"><button class="close" aria-label="Fermer">×</button><div id="detail-content"></div></dialog>
   <script type="module" src="/admin/app.js"></script>
 </body></html>
