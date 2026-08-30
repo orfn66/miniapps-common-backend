@@ -11,7 +11,8 @@
     "migrate": "node src/migrate.js",
     "service-account:create": "node src/create-service-account.js",
     "attachments:purge": "node src/purge-attachments.js",
-    "test": "node --test"
+    "test": "node --test test/domain.test.js",
+    "test:integration": "node test/integration.mjs"
   },
   "dependencies": {
     "pg": "8.23.0"
