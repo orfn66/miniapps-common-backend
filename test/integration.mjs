@@ -112,7 +112,7 @@ try {
   assert.equal((await json('/api/v1/admin/feedback',{headers:{cookie:loginCookie}})).response.status,200);
   assert.equal((await fetch(`${apiOrigin}/api/v1/admin/attachments/${upload.body.attachment.id}`,{headers:{cookie:loginCookie}})).status,200);
   assert.equal((await json('/api/v1/admin/feedback',{headers:{cookie:loginCookie,authorization:'Bearer invalid'}})).response.status,401);
-  const cookiePatch = headers => json(`/api/v1/admin/feedback/${ticket.body.feedback.public_id}`,{method:'PATCH',headers:{cookie:loginCookie,'content-type':'application/json',...headers},body:JSON.stringify({status:'confirmed'})});
+  const cookiePatch = headers => json(`/api/v1/admin/feedback/${ticket.body.feedback.public_id}`,{method:'PATCH',headers:{cookie:loginCookie,'content-type':'application/json','x-forwarded-proto':'https',...headers},body:JSON.stringify({status:'confirmed'})});
   assert.equal((await cookiePatch({origin:authOrigin})).response.status,403);
   assert.equal((await cookiePatch({origin:'https://hostile.example','x-csrf-token':login.body.csrf_token})).response.status,403);
   assert.equal((await cookiePatch({origin:authOrigin,'x-csrf-token':login.body.csrf_token})).response.status,200);
