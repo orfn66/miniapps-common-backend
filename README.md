@@ -1,6 +1,8 @@
-# Mini-apps Common Backend
+# App Platform V1 (évolution du Mini-apps Common Backend)
 
 Backend pilote commun des mini-jeux. Il est déployé par Coolify avec uniquement des données de validation non sensibles.
+
+La migration `002_app_platform_feedback.sql` prépare sa généralisation en App Platform transversale : registre d’applications, workflow complet, interface `/admin`, pièces jointes privées, comptes de service à scopes et contrat `openapi.yaml`. Le pilote produit est `minigames-hub`; les jeux comme Perfect Tap restent des modules internes.
 
 ## Déploiement pilote
 
@@ -19,6 +21,8 @@ Variables Coolify nécessaires, sans valeur dans Git :
 | `APP_DB_PASSWORD` | authentification du rôle runtime limité `miniapps_api` |
 | `CORS_ALLOWED_ORIGINS` | liste séparée par des virgules des origines frontend autorisées |
 
+Le volume `miniapps_attachments` stocke les captures privées. Il n’est exposé par aucun port et doit être inclus dans Restic avant collecte réelle.
+
 Les mots de passe production et preview sont indépendants. Ils sont gérés dans Coolify et ne doivent jamais être affichés, copiés dans Git ou transmis au client.
 
 ## Fonctions du prototype
@@ -36,6 +40,7 @@ Les mots de passe production et preview sont indépendants. Ils sont gérés dan
 ```bash
 npm ci
 npm test
+node --check src/server.js
 ```
 
 Pour un test Docker, copier `.env.example` vers `.env`, remplacer les valeurs par des secrets aléatoires indépendants, puis exécuter :

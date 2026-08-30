@@ -56,6 +56,13 @@ services:
       db-init:
         condition: service_completed_successfully
 
+  attachments-init:
+    image: alpine:3.22
+    restart: "no"
+    command: ["sh", "-c", "chown -R 1000:1000 /data/attachments && chmod 700 /data/attachments"]
+    volumes:
+      - miniapps_attachments:/data/attachments
+
   api:
     build: .
     restart: unless-stopped
@@ -66,12 +73,17 @@ services:
       PGUSER: miniapps_api
       PGPASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?set CORS_ALLOWED_ORIGINS}
+      ATTACHMENTS_DIR: /data/attachments
       PORT: "3000"
     depends_on:
       migrate:
         condition: service_completed_successfully
+      attachments-init:
+        condition: service_completed_successfully
     expose:
       - "3000"
+    volumes:
+      - miniapps_attachments:/data/attachments
     healthcheck:
       test: ["CMD", "node", "src/healthcheck.js"]
       interval: 10s
@@ -80,3 +92,4 @@ services:
 
 volumes:
   miniapps_pg_data:
+  miniapps_attachments:

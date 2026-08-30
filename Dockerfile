@@ -8,6 +8,7 @@ RUN npm ci --omit=dev
 
 COPY --chown=node:node src ./src
 COPY --chown=node:node migrations ./migrations
+COPY --chown=node:node admin ./admin
 
 USER node
 EXPOSE 3000

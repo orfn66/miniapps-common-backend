@@ -1,0 +1,76 @@
+openapi: 3.1.0
+info: {title: App Platform Feedback API, version: 1.0.0}
+servers: [{url: https://platform.example.invalid/api/v1}]
+paths:
+  /apps:
+    get: {summary: Liste des applications actives, responses: {'200': {description: OK}}}
+  /installations:
+    post:
+      summary: Crée une installation pseudonyme
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InstallationInput'}}}}
+      responses: {'201': {description: Jeton affiché une fois}, '404': {description: Application inconnue ou inactive}, '429': {description: Limité}}
+  /feedback:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Crée un ticket
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/FeedbackInput'}}}}
+      responses: {'201': {description: Créé}, '400': {description: Entrée invalide}}
+  /feedback/mine:
+    get: {security: [{bearerAuth: []}], summary: Tickets de l’installation, responses: {'200': {description: OK}}}
+  /feedback/{id}/attachments:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Ajoute une image privée au ticket propriétaire
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string, format: uuid}}
+        - {in: header, name: X-Attachment-Consent, required: true, schema: {type: string, const: 'true'}}
+      requestBody: {required: true, content: {image/jpeg: {}, image/png: {}, image/webp: {}}}
+      responses: {'201': {description: Créée}, '413': {description: Plus de 5 Mio}, '415': {description: Format invalide}}
+  /admin/apps:
+    get: {security: [{bearerAuth: []}], summary: Registre autorisé (apps:read), responses: {'200': {description: OK}}}
+    post: {security: [{bearerAuth: []}], summary: Enregistre une app (apps:write), responses: {'200': {description: Créée ou mise à jour}}
+  /admin/feedback:
+    get:
+      security: [{bearerAuth: []}]
+      summary: Liste filtrée (feedback:read)
+      parameters:
+        - {in: query, name: app_id, schema: {type: string}}
+        - {in: query, name: type, schema: {$ref: '#/components/schemas/FeedbackType'}}
+        - {in: query, name: status, schema: {$ref: '#/components/schemas/Status'}}
+        - {in: query, name: priority, schema: {type: string}}
+        - {in: query, name: version, schema: {type: string}}
+        - {in: query, name: from, schema: {type: string, format: date}}
+        - {in: query, name: to, schema: {type: string, format: date}}
+      responses: {'200': {description: OK}}
+  /admin/apps/{app_id}:
+    patch:
+      security: [{bearerAuth: []}]
+      summary: Active ou archive une application (apps:write)
+      parameters: [{in: path, name: app_id, required: true, schema: {type: string}}]
+      responses: {'200': {description: OK}, '404': {description: Application inconnue}}
+  /admin/feedback/{id}:
+    get: {security: [{bearerAuth: []}], summary: Détail (feedback:read), parameters: [{$ref: '#/components/parameters/TicketId'}], responses: {'200': {description: OK}}}
+    patch: {security: [{bearerAuth: []}], summary: Transition (feedback:write), parameters: [{$ref: '#/components/parameters/TicketId'}], responses: {'200': {description: OK}, '409': {description: Transition invalide}}}
+components:
+  securitySchemes: {bearerAuth: {type: http, scheme: bearer}}
+  parameters: {TicketId: {in: path, name: id, required: true, schema: {type: string, format: uuid}}}
+  schemas:
+    InstallationInput: {type: object, required: [app_id, client_version], additionalProperties: false, properties: {app_id: {type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'}, client_version: {type: string, maxLength: 64}}}
+    FeedbackType: {type: string, enum: [bug, improvement, suggestion, review]}
+    Status: {type: string, enum: [new, to_analyze, confirmed, in_progress, to_test, fixed, closed]}
+    FeedbackInput:
+      type: object
+      required: [type, message]
+      properties:
+        type: {$ref: '#/components/schemas/FeedbackType'}
+        title: {type: string, maxLength: 160}
+        message: {type: string, minLength: 1, maxLength: 4000}
+        priority: {type: string, enum: [low, normal, high, critical], default: normal}
+        occurred_at: {type: string, format: date-time}
+        route: {type: string, maxLength: 256}
+        device: {type: string, maxLength: 160}
+        os: {type: string, maxLength: 120}
+        browser: {type: string, maxLength: 120}
+        resolution: {type: string, maxLength: 32}
+        user_reference: {type: string, maxLength: 160, description: Identifiant opaque propre à l’application, jamais un e-mail}
+        technical_context: {type: object, maxProperties: 24, additionalProperties: true}

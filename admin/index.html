@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Platform — Feedback</title><link rel="stylesheet" href="/admin/style.css"></head>
+<body>
+  <header><div><p>APP PLATFORM</p><h1>Feedback centralisé</h1></div><button id="auth">Configurer l’accès</button></header>
+  <main>
+    <section class="summary"><article><span>Applications</span><strong id="app-count">—</strong></article><article><span>Tickets visibles</span><strong id="ticket-count">—</strong></article><article><span>Nouveaux</span><strong id="new-count">—</strong></article></section>
+    <form id="filters" class="filters">
+      <label>Application<select name="app_id"><option value="">Toutes</option></select></label>
+      <label>Type<select name="type"><option value="">Tous</option><option value="bug">Bug</option><option value="improvement">Amélioration</option><option value="suggestion">Suggestion</option><option value="review">Avis</option></select></label>
+      <label>Statut<select name="status"><option value="">Tous</option><option value="new">Nouveau</option><option value="to_analyze">À analyser</option><option value="confirmed">Confirmé</option><option value="in_progress">En cours</option><option value="to_test">À tester</option><option value="fixed">Corrigé</option><option value="closed">Fermé</option></select></label>
+      <label>Priorité<select name="priority"><option value="">Toutes</option><option value="low">Basse</option><option value="normal">Normale</option><option value="high">Haute</option><option value="critical">Critique</option></select></label>
+      <label>Version<input name="version" maxlength="64"></label><label>Depuis<input name="from" type="date"></label><label>Jusqu’au<input name="to" type="date"></label>
+      <button>Filtrer</button>
+    </form>
+    <p id="notice" role="status">Configurez un jeton de service limité pour charger les tickets.</p>
+    <section id="tickets" class="tickets" aria-live="polite"></section>
+  </main>
+  <dialog id="detail"><button class="close" aria-label="Fermer">×</button><div id="detail-content"></div></dialog>
+  <script type="module" src="/admin/app.js"></script>
+</body></html>
