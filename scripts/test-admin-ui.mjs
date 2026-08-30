@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 
 const profile = await mkdtemp(join(tmpdir(), 'app-platform-ui-test-'));
 const server = createServer(async (req,res) => {
-  const file = {'/admin':'index.html','/admin/app.js':'app.js','/admin/style.css':'style.css'}[req.url];
+  const file = {'/admin':'index.html','/admin/app.js':'app.js','/admin/style.css':'style.css'}[new URL(req.url,'http://localhost').pathname];
   if (!file) {res.writeHead(404);res.end();return;}
   res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');
   res.end(await readFile(new URL(`../admin/${file}`,import.meta.url)));

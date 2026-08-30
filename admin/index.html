@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="fr">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Platform — Feedback</title><link rel="stylesheet" href="/admin/style.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Platform — Feedback</title><link rel="stylesheet" href="/admin/style.css?v=2"></head>
 <body>
   <header><div><p>APP PLATFORM</p><h1>Feedback centralisé</h1></div><div class="account-actions"><span id="account-email"></span><button id="password-button" hidden>Changer le mot de passe</button><button id="logout" hidden>Se déconnecter</button><button id="auth">Accès par jeton</button></div></header>
   <main>
@@ -37,5 +37,5 @@
   </main>
   <dialog id="password-dialog"><button class="close" aria-label="Fermer">×</button><h2>Changer le mot de passe</h2><form id="password-form"><label>Mot de passe actuel<input name="current_password" type="password" autocomplete="current-password" required></label><label>Nouveau mot de passe (15 caractères minimum)<input name="password" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label><label>Confirmer<input name="confirmation" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label><button type="submit">Enregistrer et fermer les autres sessions</button></form><p id="password-notice" role="status"></p></dialog>
   <dialog id="detail"><button class="close" aria-label="Fermer">×</button><div id="detail-content"></div></dialog>
-  <script type="module" src="/admin/app.js"></script>
+  <script type="module" src="/admin/app.js?v=2"></script>
 </body></html>

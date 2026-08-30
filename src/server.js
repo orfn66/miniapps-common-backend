@@ -100,7 +100,7 @@ async function sendAdminAsset(response, pathname) {
   const names = new Map([["/admin", "index.html"], ["/admin/", "index.html"], ["/admin/app.js", "app.js"], ["/admin/style.css", "style.css"]]);
   const name = names.get(pathname); if (!name) return false;
   const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8" };
-  response.writeHead(200, { ...headers(types[extname(name)]), "cache-control": name === "index.html" ? "no-store" : "public, max-age=300" });
+  response.writeHead(200, headers(types[extname(name)]));
   createReadStream(join(adminDirectory, name)).pipe(response); return true;
 }
 
