@@ -12,6 +12,8 @@ const filters = document.querySelector('#filters');
 const dialog = document.querySelector('#detail');
 const labels = { new:'Nouveau',to_analyze:'À analyser',confirmed:'Confirmé',in_progress:'En cours',to_test:'À tester',fixed:'Corrigé',closed:'Fermé' };
 const transitions = { new:['to_analyze','closed'],to_analyze:['confirmed','closed'],confirmed:['in_progress','closed'],in_progress:['to_test','confirmed','closed'],to_test:['fixed','in_progress','closed'],fixed:['closed','in_progress'],closed:['to_analyze'] };
+const decisionLabels = {to_triage:'À trier',to_do:'À faire',to_discuss:'À discuter',not_needed:'Pas besoin'};
+const destinationLabels = {none:'Aucun envoi',auto:'Auto',chatgpt:'ChatGPT',codex:'Codex'};
 async function api(path, init={}) {
   const response = await fetch(`/api/v1/admin${path}`, { ...init, headers:{ ...authHeaders(),'Content-Type':'application/json',...init.headers } });
   const body = response.status===204 ? {} : await response.json().catch(()=>({}));
@@ -26,7 +28,7 @@ async function load() {
     const [apps,data] = await Promise.all([api('/apps'),api(`/feedback?${query}`)]);
     const select=filters.elements.app_id, selected=select.value; select.innerHTML='<option value="">Toutes</option>'+apps.apps.map(app=>`<option value="${escapeHtml(app.app_id)}">${escapeHtml(app.name)}</option>`).join(''); select.value=selected;
     document.querySelector('#app-count').textContent=apps.apps.length; document.querySelector('#ticket-count').textContent=data.feedback.length; document.querySelector('#new-count').textContent=data.feedback.filter(item=>item.status==='new').length;
-    ticketsRoot.innerHTML=data.feedback.length ? data.feedback.map(item=>`<button class="ticket" data-id="${item.public_id}"><span class="app">${escapeHtml(item.app_name)}</span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.message)}</span><small><b class="kind">${escapeHtml(item.type)}</b><b class="priority ${item.priority}">${escapeHtml(item.priority)}</b><b class="status">${labels[item.status]||item.status}</b> · ${escapeHtml(item.client_version)} · ${new Date(item.created_at).toLocaleString('fr-BE')}${item.attachment_count ? ` · 📎 ${item.attachment_count}`:''}</small></button>`).join('') : '<p class="empty">Aucun ticket dans ce filtre.</p>';
+    ticketsRoot.innerHTML=data.feedback.length ? data.feedback.map(item=>`<button class="ticket" data-id="${item.public_id}"><span class="app">${escapeHtml(item.app_name)}</span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.message)}</span><small><b class="kind">${escapeHtml(item.type)}</b><b class="priority ${item.priority}">${escapeHtml(item.priority)}</b><b class="status">${labels[item.status]||item.status}</b><b class="decision">Chris : ${escapeHtml(decisionLabels[item.chris_decision]||'À trier')}</b> · ${escapeHtml(item.client_version)} · ${new Date(item.created_at).toLocaleString('fr-BE')}${item.attachment_count ? ` · 📎 ${item.attachment_count}`:''}</small></button>`).join('') : '<p class="empty">Aucun ticket dans ce filtre.</p>';
     notice.textContent='';
   } catch(error) { notice.textContent=`Accès impossible : ${error.message}`; if(error.message==='unauthorized'){await clearAccess();loginNotice.textContent='Votre session a expiré. Reconnectez-vous.';} }
 }
@@ -34,10 +36,51 @@ async function openTicket(id) {
   try {
     const data=await api(`/feedback/${id}`), f=data.feedback;
     document.querySelector('#detail-content').innerHTML=`<p class="eyebrow">${escapeHtml(f.app_name)} · ${escapeHtml(f.type)}</p><h2>${escapeHtml(f.title)}</h2><p class="message">${escapeHtml(f.message)}</p><dl><dt>Version</dt><dd>${escapeHtml(f.client_version)}</dd><dt>Route</dt><dd>${escapeHtml(f.route||'—')}</dd><dt>Contexte</dt><dd>${escapeHtml(JSON.stringify(f.technical_context))}</dd><dt>Appareil</dt><dd>${escapeHtml([f.device,f.os,f.browser,f.resolution].filter(Boolean).join(' · ')||'—')}</dd></dl>${data.attachments.length?`<h3>Pièces jointes</h3>${data.attachments.map(a=>`<a href="/api/v1/admin/attachments/${a.id}" data-download="${a.id}">${escapeHtml(a.original_name||'Capture')} · ${Math.ceil(a.byte_size/1024)} Ko</a>`).join('')}`:''}<form id="status-form"><label>Faire évoluer le statut<select name="status">${(transitions[f.status]||[]).map(s=>`<option value="${s}">${labels[s]}</option>`).join('')}</select></label><label>Note facultative<textarea name="note" maxlength="1000"></textarea></label><button ${!(transitions[f.status]||[]).length?'disabled':''}>Mettre à jour</button></form>`;
+    document.querySelector('#status-form').insertAdjacentHTML('beforebegin', decisionPanel(data));
+    bindDecision(f);
     dialog.showModal();
     document.querySelector('#status-form').addEventListener('submit',async event=>{ event.preventDefault(); try { const values=Object.fromEntries(new FormData(event.currentTarget)); await api(`/feedback/${id}`,{method:'PATCH',body:JSON.stringify(values)}); dialog.close(); await load(); } catch(error) { notice.textContent=`Mise à jour refusée : ${error.message}`; dialog.close(); } });
     document.querySelectorAll('[data-download]').forEach(link=>link.addEventListener('click',async event=>{ event.preventDefault(); const response=await fetch(link.href,{headers:authHeaders()}); if(!response.ok)return; const blob=await response.blob(), url=URL.createObjectURL(blob), anchor=document.createElement('a'); anchor.href=url; anchor.download=link.textContent.split(' · ')[0]; anchor.click(); URL.revokeObjectURL(url); }));
   } catch(error) { notice.textContent=`Ticket inaccessible : ${error.message}`; }
+}
+function decisionPanel(data) {
+  const f=data.feedback, editable=data.can_edit_decision===true;
+  return `<section class="decision-panel" aria-labelledby="decision-heading"><h3 id="decision-heading">Décision de Chris</h3>
+    <p>Une orientation pour le centre, indépendante du statut technique. Rien n’est envoyé depuis ce panneau.</p>
+    ${editable?`<form id="decision-form"><label>Décision<select name="chris_decision">${Object.entries(decisionLabels).map(([value,label])=>`<option value="${value}" ${f.chris_decision===value?'selected':''}>${label}</option>`).join('')}</select></label>
+      <label id="decision-destination-label">Destinataire<select name="decision_destination">${['auto','chatgpt','codex'].map(value=>`<option value="${value}" ${f.decision_destination===value?'selected':''}>${destinationLabels[value]}</option>`).join('')}</select></label>
+      <p id="decision-help"></p><label>Consigne facultative de Chris<textarea name="decision_note" maxlength="1000" rows="3">${escapeHtml(f.decision_note||'')}</textarea></label>
+      <button>Enregistrer la décision</button></form>`:
+      `<p><strong>${escapeHtml(decisionLabels[f.chris_decision]||'À trier')}</strong> · ${escapeHtml(destinationLabels[f.decision_destination]||'Aucun envoi')}</p><p class="message">${escapeHtml(f.decision_note||'')}</p><p>Lecture seule. Connectez-vous par e-mail avec un accès admin autorisé pour décider.</p>`}
+    <p class="decision-version">Version ${Number(f.decision_version)||0}${f.decision_updated_at?` · ${new Date(f.decision_updated_at).toLocaleString('fr-BE')}`:' · Aucune décision enregistrée'}</p>
+    <p id="decision-notice" role="status"></p><button id="decision-reload" type="button" hidden>Recharger le ticket</button>
+    ${data.decision_history?.length?`<details><summary>Historique des décisions (50 dernières maximum)</summary><ul>${data.decision_history.map(entry=>`<li>v${Number(entry.details.version)} · ${new Date(entry.created_at).toLocaleString('fr-BE')} — ${escapeHtml(decisionLabels[entry.details.after?.chris_decision]||'')} / ${escapeHtml(destinationLabels[entry.details.after?.decision_destination]||'')}<p class="message">${escapeHtml(entry.details.after?.decision_note||'')}</p></li>`).join('')}</ul></details>`:''}
+  </section>`;
+}
+function bindDecision(f) {
+  const form=document.querySelector('#decision-form'); if(!form)return;
+  const help=document.querySelector('#decision-help');
+  const updateDestination=()=>{
+    const decision=form.elements.chris_decision.value;
+    document.querySelector('#decision-destination-label').hidden=decision!=='to_do';
+    help.textContent={to_triage:'Aucune action à transmettre.',to_do:'Demander une solution au destinataire. Ce choix n’autorise pas à lui seul un développement ou un déploiement.',to_discuss:'À discuter avec ChatGPT. Le centre transmettra la demande lorsqu’il sera sollicité.',not_needed:'Aucun envoi. Le ticket reste conservé et son statut technique ne change pas.'}[decision];
+  };
+  form.elements.chris_decision.addEventListener('change',updateDestination);updateDestination();
+  document.querySelector('#decision-reload').addEventListener('click',()=>{dialog.close();void openTicket(f.public_id);});
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();const button=form.querySelector('button');button.disabled=true;
+    const values=Object.fromEntries(new FormData(form));
+    values.decision_destination=values.chris_decision==='to_discuss'?'chatgpt':values.chris_decision==='to_do'?values.decision_destination:'none';
+    values.expected_version=f.decision_version;
+    try {
+      const result=await api(`/feedback/${f.public_id}/decision`,{method:'PATCH',body:JSON.stringify(values)});
+      dialog.close();await load();notice.textContent=result.changed?'Décision enregistrée. Aucun message envoyé ; le centre la traitera lorsqu’il sera sollicité.':'Décision inchangée. Aucun message envoyé.';
+    } catch(error) {
+      const conflict=error.message==='decision_conflict';
+      document.querySelector('#decision-notice').textContent=conflict?'La décision a changé dans une autre session. Rechargez le ticket avant de choisir à nouveau.':'Décision non enregistrée. Vérifiez votre session et réessayez.';
+      document.querySelector('#decision-reload').hidden=!conflict;
+    } finally {button.disabled=false;}
+  });
 }
 function authHeaders() { return token() ? {Authorization:`Bearer ${token()}`} : csrfToken ? {'X-CSRF-Token':csrfToken} : {}; }
 function showWorkspace(email='Accès par jeton') {

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
 import { createPasswordAuth, sessionMutationAllowed } from "./password-auth.js";
+import { canEditDecision, changeDecision, decisionSelect, hasDecisionFields } from './decision.js';
 import { hashToken, issueInstallationCredential, validateApplication, validateFeedback, validateInstallation, validatePlaySession, validateStatusTransition } from "./domain.js";
 
 const { Pool } = pg;
@@ -90,7 +91,7 @@ async function purgeExpiredAttachments() {
 function listFilters(url, actor) {
   const clauses = [], values = [];
   const add = (sql, value) => { values.push(value); clauses.push(sql.replace("?", `$${values.length}`)); };
-  for (const [parameter, column] of [["app_id", "i.game_slug"], ["type", "f.type"], ["status", "f.status"], ["priority", "f.priority"], ["version", "f.client_version"]]) if (url.searchParams.get(parameter)) add(`${column} = ?`, url.searchParams.get(parameter));
+  for (const [parameter, column] of [["app_id", "i.game_slug"], ["type", "f.type"], ["status", "f.status"], ["priority", "f.priority"], ["version", "f.client_version"], ["chris_decision", "f.chris_decision"]]) if (url.searchParams.get(parameter)) add(`${column} = ?`, url.searchParams.get(parameter));
   if (url.searchParams.get("from")) add("f.created_at >= ?::timestamptz", url.searchParams.get("from"));
   if (url.searchParams.get("to")) add("f.created_at < ?::timestamptz + interval '1 day'", url.searchParams.get("to"));
   if (actor.app_ids !== null) add("i.game_slug = ANY(?::text[])", actor.app_ids);
@@ -198,22 +199,31 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/v1/admin/feedback" && requireService(actor, "feedback:read")) {
       const { where, values } = listFilters(url, actor);
-      const result = await pool.query(`SELECT f.public_id,f.type,f.title,f.comment AS message,f.priority,f.status,f.client_version,f.client_occurred_at,f.route,f.device,f.os,f.browser,f.resolution,f.technical_context,f.created_at,f.updated_at,i.game_slug AS app_id,g.name AS app_name,(SELECT count(*)::integer FROM feedback_attachments a WHERE a.feedback_id=f.id AND a.deleted_at IS NULL) AS attachment_count FROM feedback f JOIN installations i ON i.id=f.installation_id JOIN games g ON g.slug=i.game_slug ${where} ORDER BY f.created_at DESC LIMIT 500`, values);
+      const result = await pool.query(`SELECT f.public_id,${decisionSelect},f.type,f.title,f.comment AS message,f.priority,f.status,f.client_version,f.client_occurred_at,f.route,f.device,f.os,f.browser,f.resolution,f.technical_context,f.created_at,f.updated_at,i.game_slug AS app_id,g.name AS app_name,(SELECT count(*)::integer FROM feedback_attachments a WHERE a.feedback_id=f.id AND a.deleted_at IS NULL) AS attachment_count FROM feedback f JOIN installations i ON i.id=f.installation_id JOIN games g ON g.slug=i.game_slug ${where} ORDER BY f.created_at DESC LIMIT 500`, values);
       status = 200; return reply(response, status, { feedback: result.rows }, origin);
     }
     const ticketMatch = /^\/api\/v1\/admin\/feedback\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (request.method === "GET" && ticketMatch && requireService(actor, "feedback:read")) {
-      const result = await pool.query(`SELECT f.id,f.public_id,f.type,f.title,f.comment AS message,f.priority,f.status,f.client_version,f.client_occurred_at,f.route,f.device,f.os,f.browser,f.resolution,f.technical_context,f.created_at,f.updated_at,i.game_slug AS app_id,g.name AS app_name FROM feedback f JOIN installations i ON i.id=f.installation_id JOIN games g ON g.slug=i.game_slug WHERE f.public_id=$1`, [ticketMatch[1]]);
+      const result = await pool.query(`SELECT f.id,f.public_id,${decisionSelect},f.type,f.title,f.comment AS message,f.priority,f.status,f.client_version,f.client_occurred_at,f.route,f.device,f.os,f.browser,f.resolution,f.technical_context,f.created_at,f.updated_at,i.game_slug AS app_id,g.name AS app_name FROM feedback f JOIN installations i ON i.id=f.installation_id JOIN games g ON g.slug=i.game_slug WHERE f.public_id=$1`, [ticketMatch[1]]);
       if (!result.rowCount || !serviceCanAccessApp(actor, result.rows[0].app_id)) { status = 404; return reply(response, status, { error: "feedback_not_found" }, origin); }
-      const [history, attachments] = await Promise.all([
+      const [history, attachments, decisions] = await Promise.all([
         pool.query("SELECT from_status,to_status,changed_by,note,created_at FROM feedback_status_history WHERE feedback_id=$1 ORDER BY created_at", [result.rows[0].id]),
         pool.query("SELECT id,original_name,media_type,byte_size,created_at,expires_at FROM feedback_attachments WHERE feedback_id=$1 AND deleted_at IS NULL ORDER BY created_at", [result.rows[0].id]),
+        pool.query("SELECT actor,details,created_at FROM platform_audit_log WHERE target_type='feedback' AND target_id=$1 AND action='feedback.decision_update' ORDER BY id DESC LIMIT 50", [ticketMatch[1]]),
       ]);
       const feedback = result.rows[0]; delete feedback.id;
-      status = 200; return reply(response, status, { feedback, history: history.rows, attachments: attachments.rows }, origin);
+      status = 200; return reply(response, status, { feedback, history: history.rows, attachments: attachments.rows, decision_history: decisions.rows, can_edit_decision: canEditDecision(actor) }, origin);
+    }
+    const decisionMatch = /^\/api\/v1\/admin\/feedback\/([0-9a-f-]{36})\/decision$/.exec(url.pathname);
+    if (request.method === 'PATCH' && decisionMatch) {
+      if (!canEditDecision(actor)) { status = 403; return reply(response, status, { error: 'human_admin_required' }, origin); }
+      const result = await changeDecision(pool, actor, decisionMatch[1], await readJson(request, 8192));
+      status = result.status; return reply(response, status, result.body, origin);
     }
     if (request.method === "PATCH" && ticketMatch && requireService(actor, "feedback:write")) {
-      const input = await readJson(request), current = await pool.query("SELECT f.id,f.status,i.game_slug AS app_id FROM feedback f JOIN installations i ON i.id=f.installation_id WHERE f.public_id=$1", [ticketMatch[1]]);
+      const input = await readJson(request);
+      if (hasDecisionFields(input)) { status = 400; return reply(response, status, { error: 'decision_endpoint_required' }, origin); }
+      const current = await pool.query("SELECT f.id,f.status,i.game_slug AS app_id FROM feedback f JOIN installations i ON i.id=f.installation_id WHERE f.public_id=$1", [ticketMatch[1]]);
       if (!current.rowCount || !serviceCanAccessApp(actor, current.rows[0].app_id)) { status = 404; return reply(response, status, { error: "feedback_not_found" }, origin); }
       if (!validateStatusTransition(current.rows[0].status, input.status)) { status = 409; return reply(response, status, { error: "status_transition_invalid" }, origin); }
       const updated = await pool.query("UPDATE feedback SET status=$2::varchar(24),updated_at=now(),closed_at=CASE WHEN $2::text='closed' THEN now() ELSE NULL END WHERE id=$1 RETURNING public_id,status,updated_at", [current.rows[0].id, input.status]);

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import pg from "pg";
 import { hashToken } from "../src/domain.js";
+import { testDecisions } from './decision.integration.mjs';
 
 const adminUrl = process.env.TEST_DATABASE_URL || "postgresql://postgres:postgres@127.0.0.1:5432/app_platform_test";
 const parsedAdminUrl = new URL(adminUrl);
@@ -116,6 +117,7 @@ try {
   assert.equal((await cookiePatch({origin:authOrigin})).response.status,403);
   assert.equal((await cookiePatch({origin:'https://hostile.example','x-csrf-token':login.body.csrf_token})).response.status,403);
   assert.equal((await cookiePatch({origin:authOrigin,'x-csrf-token':login.body.csrf_token})).response.status,200);
+  await testDecisions({json,admin,id:ticket.body.feedback.public_id,legacyInstallation,auth,adminHeaders,codexHeaders,loginCookie,csrf:login.body.csrf_token,authOrigin});
   assert.equal((await authPost('logout',{}, {cookie:loginCookie})).response.status,403);
   assert.equal((await authPost('logout',{}, {cookie:loginCookie,'x-csrf-token':login.body.csrf_token})).response.status,200);
   assert.equal((await json('/api/v1/auth/session',{headers:{cookie:loginCookie}})).response.status,401);

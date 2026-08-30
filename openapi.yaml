@@ -53,20 +53,29 @@ paths:
       responses: {'201': {description: Créée}, '413': {description: Plus de 5 Mio}, '415': {description: Format invalide}}
   /admin/apps:
     get: {security: [{bearerAuth: []}], summary: Registre autorisé (apps:read), responses: {'200': {description: OK}}}
-    post: {security: [{bearerAuth: []}], summary: Enregistre une app (apps:write), responses: {'200': {description: Créée ou mise à jour}}
+    post: {security: [{bearerAuth: []}], summary: Enregistre une app (apps:write), responses: {'200': {description: Créée ou mise à jour}}}
   /admin/feedback:
     get:
-      security: [{bearerAuth: []}]
+      security: [{bearerAuth: []}, {humanSession: []}]
       summary: Liste filtrée (feedback:read)
       parameters:
         - {in: query, name: app_id, schema: {type: string}}
         - {in: query, name: type, schema: {$ref: '#/components/schemas/FeedbackType'}}
         - {in: query, name: status, schema: {$ref: '#/components/schemas/Status'}}
         - {in: query, name: priority, schema: {type: string}}
+        - {in: query, name: chris_decision, schema: {$ref: '#/components/schemas/ChrisDecision'}}
         - {in: query, name: version, schema: {type: string}}
         - {in: query, name: from, schema: {type: string, format: date}}
         - {in: query, name: to, schema: {type: string, format: date}}
-      responses: {'200': {description: OK}}
+      responses:
+        '200':
+          description: Tickets autorisés ; champs de décision inclus, sans aucun envoi automatique.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  feedback: {type: array, items: {$ref: '#/components/schemas/DecisionFields'}}
   /admin/apps/{app_id}:
     patch:
       security: [{bearerAuth: []}]
@@ -74,12 +83,75 @@ paths:
       parameters: [{in: path, name: app_id, required: true, schema: {type: string}}]
       responses: {'200': {description: OK}, '404': {description: Application inconnue}}
   /admin/feedback/{id}:
-    get: {security: [{bearerAuth: []}], summary: Détail (feedback:read), parameters: [{$ref: '#/components/parameters/TicketId'}], responses: {'200': {description: OK}}}
+    get:
+      security: [{bearerAuth: []}, {humanSession: []}]
+      summary: Détail (feedback:read), décision et historique inclus
+      parameters: [{$ref: '#/components/parameters/TicketId'}]
+      responses:
+        '200':
+          description: Ticket autorisé ; historique des 50 dernières décisions et capacité humaine calculée côté serveur.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  feedback: {$ref: '#/components/schemas/DecisionFields'}
+                  can_edit_decision: {type: boolean}
+                  decision_history: {type: array, items: {type: object, description: 'actor, created_at et details contenant version/before/after'}}
     patch: {security: [{bearerAuth: []}], summary: Transition (feedback:write), parameters: [{$ref: '#/components/parameters/TicketId'}], responses: {'200': {description: OK}, '409': {description: Transition invalide}}}
+  /admin/feedback/{id}/decision:
+    patch:
+      security: [{humanSession: []}]
+      summary: Décision personnelle, session humaine autorisée uniquement
+      description: Cookie valide avec feedback:read et feedback:write, app autorisée, origine HTTPS exacte et CSRF requis. Tous les Bearer sont refusés, même admin. Aucun changement de statut ni envoi. Contrôle optimiste expected_version ; une sauvegarde identique ne crée pas de version.
+      parameters:
+        - {$ref: '#/components/parameters/TicketId'}
+        - {in: header, name: X-CSRF-Token, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [chris_decision, decision_destination, decision_note, expected_version]
+              properties:
+                chris_decision: {$ref: '#/components/schemas/ChrisDecision'}
+                decision_destination: {type: string, enum: [none, auto, chatgpt, codex], description: to_do accepte auto/chatgpt/codex ; to_discuss impose chatgpt ; les autres imposent none.}
+                decision_note: {type: string, maxLength: 1000}
+                expected_version: {type: integer, minimum: 0, maximum: 2147483646}
+      responses:
+        '200':
+          description: Enregistré ou identique ; version et audit atomiques.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  feedback: {$ref: '#/components/schemas/DecisionFields'}
+                  changed: {type: boolean}
+        '400': {description: Valeurs ou association décision/destination invalides}
+        '401': {description: Non authentifié}
+        '403': {description: 'Session humaine, droits, origine ou CSRF refusés'}
+        '404': {description: Ticket absent ou hors périmètre}
+        '409': {description: decision_conflict — recharger la décision avant de réessayer}
 components:
-  securitySchemes: {bearerAuth: {type: http, scheme: bearer}}
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+    humanSession: {type: apiKey, in: cookie, name: __Host-app-platform-session}
   parameters: {TicketId: {in: path, name: id, required: true, schema: {type: string, format: uuid}}}
   schemas:
+    ChrisDecision: {type: string, enum: [to_triage, to_do, to_discuss, not_needed]}
+    DecisionFields:
+      type: object
+      description: Champs ajoutés aux réponses admin existantes ; les autres champs du ticket restent inchangés. Non exposés dans feedback/mine.
+      properties:
+        public_id: {type: string, format: uuid}
+        chris_decision: {$ref: '#/components/schemas/ChrisDecision', default: to_triage}
+        decision_destination: {type: string, enum: [none, auto, chatgpt, codex], default: none}
+        decision_note: {type: string, maxLength: 1000, default: ''}
+        decision_version: {type: integer, minimum: 0, default: 0}
+        decision_updated_at: {type: [string, 'null'], format: date-time}
     InstallationInput: {type: object, required: [app_id, client_version], additionalProperties: false, properties: {app_id: {type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'}, client_version: {type: string, maxLength: 64}}}
     FeedbackType: {type: string, enum: [bug, improvement, suggestion, review]}
     Status: {type: string, enum: [new, to_analyze, confirmed, in_progress, to_test, fixed, closed]}

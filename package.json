@@ -13,6 +13,7 @@
     "attachments:purge": "node src/purge-attachments.js",
     "test": "node --test test/*.test.js",
     "test:integration": "node test/integration.mjs",
+    "test:ui": "node scripts/test-admin-ui.mjs",
     "test:preprod": "node scripts/smoke-preprod.mjs"
   },
   "dependencies": {

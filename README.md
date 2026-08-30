@@ -8,6 +8,8 @@ La migration `002_app_platform_feedback.sql` prépare sa généralisation en App
 
 Connexion humaine par e-mail et mot de passe : voir [ADMIN_ACCESS.md](ADMIN_ACCESS.md) pour la première activation autorisée par le jeton admin existant. Les jetons de service/Codex restent valides.
 
+Évolution locale non déployée : [Décision de Chris](CHRIS_DECISION.md), indépendante du statut technique, sans envoi automatique. Migration additive `004_chris_decision.sql` requise lors d’une future mise en ligne autorisée.
+
 - Dépôt : `orfn66/miniapps-common-backend`.
 - Application Coolify : `cnot0zp2jgqy1ckyydnsui5i`.
 - API technique : `https://cnot0zp2jgqy1ckyydnsui5i.179.237.105.82.sslip.io`.

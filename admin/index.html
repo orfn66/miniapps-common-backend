@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="fr">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Platform — Feedback</title><link rel="stylesheet" href="/admin/style.css?v=2"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>App Platform — Feedback</title><link rel="stylesheet" href="/admin/style.css?v=3"></head>
 <body>
   <header><div><p>APP PLATFORM</p><h1>Feedback centralisé</h1></div><div class="account-actions"><span id="account-email"></span><button id="password-button" hidden>Changer le mot de passe</button><button id="logout" hidden>Se déconnecter</button><button id="auth">Accès par jeton</button></div></header>
   <main>
@@ -28,6 +28,7 @@
       <label>Type<select name="type"><option value="">Tous</option><option value="bug">Bug</option><option value="improvement">Amélioration</option><option value="suggestion">Suggestion</option><option value="review">Avis</option></select></label>
       <label>Statut<select name="status"><option value="">Tous</option><option value="new">Nouveau</option><option value="to_analyze">À analyser</option><option value="confirmed">Confirmé</option><option value="in_progress">En cours</option><option value="to_test">À tester</option><option value="fixed">Corrigé</option><option value="closed">Fermé</option></select></label>
       <label>Priorité<select name="priority"><option value="">Toutes</option><option value="low">Basse</option><option value="normal">Normale</option><option value="high">Haute</option><option value="critical">Critique</option></select></label>
+      <label>Décision de Chris<select name="chris_decision"><option value="">Toutes</option><option value="to_triage">À trier</option><option value="to_do">À faire</option><option value="to_discuss">À discuter</option><option value="not_needed">Pas besoin</option></select></label>
       <label>Version<input name="version" maxlength="64"></label><label>Depuis<input name="from" type="date"></label><label>Jusqu’au<input name="to" type="date"></label>
       <button>Filtrer</button>
     </form>
@@ -37,5 +38,5 @@
   </main>
   <dialog id="password-dialog"><button class="close" aria-label="Fermer">×</button><h2>Changer le mot de passe</h2><form id="password-form"><label>Mot de passe actuel<input name="current_password" type="password" autocomplete="current-password" required></label><label>Nouveau mot de passe (15 caractères minimum)<input name="password" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label><label>Confirmer<input name="confirmation" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label><button type="submit">Enregistrer et fermer les autres sessions</button></form><p id="password-notice" role="status"></p></dialog>
   <dialog id="detail"><button class="close" aria-label="Fermer">×</button><div id="detail-content"></div></dialog>
-  <script type="module" src="/admin/app.js?v=2"></script>
+  <script type="module" src="/admin/app.js?v=3"></script>
 </body></html>

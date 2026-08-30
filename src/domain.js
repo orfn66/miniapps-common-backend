@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { hasDecisionFields } from './decision.js';
 
 const feedbackTypes = new Set(["bug", "improvement", "suggestion", "review"]);
 const legacyFeedbackTypes = new Map([
@@ -31,6 +32,7 @@ export function validateInstallation(input) {
 }
 
 export function validateFeedback(input) {
+  if (hasDecisionFields(input)) return null;
   const rawType = stringValue(input?.type, 16);
   const type = legacyFeedbackTypes.get(rawType) ?? rawType;
   const comment = stringValue(input?.message ?? input?.comment, 4000, true);
