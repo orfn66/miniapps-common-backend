@@ -2,6 +2,8 @@
 
 Backend commun de l’App Platform, déployé par Coolify avec uniquement des données de validation non sensibles pendant la période pilote.
 
+La branche notifications ajoute une file multi-apps documentée dans [NOTIFICATIONS.md](NOTIFICATIONS.md). FCM HTTP v1 est privilégié pour Android/Capacitor et Web Push VAPID pour les PWA ; capacités et payloads en attente sont chiffrés, isolés par `app_id` et traités par un worker sans port public. Cette brique n'est pas déployée tant que la migration 006 et les secrets serveur ne sont pas provisionnés.
+
 La migration `002_app_platform_feedback.sql` prépare sa généralisation en App Platform transversale : registre d’applications, workflow complet, interface `/admin`, pièces jointes privées, comptes de service à scopes et contrat `openapi.yaml`. Le pilote produit est `minigames-hub`; les jeux comme Perfect Tap restent des modules internes.
 
 ## Déploiement pilote

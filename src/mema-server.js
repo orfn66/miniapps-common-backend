@@ -1,8 +1,8 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import webpush from 'web-push';
 import { authenticateMemaUser, endpointHash, validateMemaFeedback, validatePushSubscription } from './mema-integration.js';
+import { capabilityHash, scopedHash, seal } from './notification-domain.js';
 
 function imageType(buffer) {
   if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return ['image/jpeg', '.jpg'];
@@ -12,7 +12,7 @@ function imageType(buffer) {
 }
 
 const cleanName = value => typeof value === 'string' ? value.replace(/[^a-zA-Z0-9._ -]/g, '_').slice(0, 255) : undefined;
-const pushConfigured = () => Boolean(process.env.MEMA_VAPID_SUBJECT && process.env.MEMA_VAPID_PUBLIC_KEY && process.env.MEMA_VAPID_PRIVATE_KEY);
+const pushConfigured = () => Boolean(process.env.VAPID_PUBLIC_KEY || process.env.MEMA_VAPID_PUBLIC_KEY);
 
 export function createMemaHandler({ pool, reply, readJson, readBinary, attachmentDirectory, rateAllowed }) {
   return async function handle(request, response, url, origin) {
@@ -58,21 +58,17 @@ export function createMemaHandler({ pool, reply, readJson, readBinary, attachmen
       const subscription = validatePushSubscription(await readJson(request));
       if (!subscription) { reply(response, 400, { error: 'input_invalid' }, origin); return 400; }
       const hash = endpointHash(subscription.endpoint);
-      await pool.query(`INSERT INTO push_subscriptions(source_app,source_actor_hash,endpoint,endpoint_hash,p256dh,auth)
-        VALUES('mema',$1,$2,$3,$4,$5) ON CONFLICT(source_app,endpoint_hash) DO UPDATE SET source_actor_hash=EXCLUDED.source_actor_hash,endpoint=EXCLUDED.endpoint,p256dh=EXCLUDED.p256dh,auth=EXCLUDED.auth,revoked_at=NULL,updated_at=now()`, [user.actorHash, subscription.endpoint, hash, subscription.keys.p256dh, subscription.keys.auth]);
-      webpush.setVapidDetails(process.env.MEMA_VAPID_SUBJECT, process.env.MEMA_VAPID_PUBLIC_KEY, process.env.MEMA_VAPID_PRIVATE_KEY);
-      try { await webpush.sendNotification(subscription, JSON.stringify({ title: 'Mema', body: 'Mema notifications are enabled.', url: '/' }), { TTL: 60 }); }
-      catch (error) {
-        if ([404, 410].includes(error.statusCode)) await pool.query("UPDATE push_subscriptions SET revoked_at=now(),updated_at=now() WHERE source_app='mema' AND endpoint_hash=$1", [hash]);
-        reply(response, 502, { error: 'push_delivery_failed' }, origin); return 502;
-      }
+      const encrypted=seal(subscription),recipientHash=scopedHash('mema',user.id),deviceHash=scopedHash('mema',hash);
+      await pool.query(`INSERT INTO notification_devices(app_id,recipient_hash,device_reference_hash,transport,platform,capability_hash,capability_ciphertext,capability_iv,capability_tag,permission)
+        VALUES('mema',$1,$2,'web_push','pwa',$3,$4,$5,$6,'granted')
+        ON CONFLICT(app_id,device_reference_hash) DO UPDATE SET recipient_hash=EXCLUDED.recipient_hash,capability_hash=EXCLUDED.capability_hash,capability_ciphertext=EXCLUDED.capability_ciphertext,capability_iv=EXCLUDED.capability_iv,capability_tag=EXCLUDED.capability_tag,permission='granted',state='active',last_error_code=NULL,last_seen_at=now(),updated_at=now(),revoked_at=NULL`, [recipientHash,deviceHash,capabilityHash(subscription),encrypted.ciphertext,encrypted.iv,encrypted.tag]);
       reply(response, 201, { enabled: true }, origin); return 201;
     }
 
     if (request.method === 'DELETE' && url.pathname === '/api/v1/integrations/mema/push-subscriptions') {
       const subscription = validatePushSubscription(await readJson(request));
       if (!subscription) { reply(response, 400, { error: 'input_invalid' }, origin); return 400; }
-      await pool.query("UPDATE push_subscriptions SET revoked_at=now(),updated_at=now() WHERE source_app='mema' AND source_actor_hash=$1 AND endpoint_hash=$2", [user.actorHash, endpointHash(subscription.endpoint)]);
+      await pool.query("UPDATE notification_devices SET state='disabled',revoked_at=now(),updated_at=now() WHERE app_id='mema' AND recipient_hash=$1 AND device_reference_hash=$2", [scopedHash('mema',user.id),scopedHash('mema',endpointHash(subscription.endpoint))]);
       reply(response, 200, { enabled: false }, origin); return 200;
     }
     reply(response, 404, { error: 'not_found' }, origin); return 404;

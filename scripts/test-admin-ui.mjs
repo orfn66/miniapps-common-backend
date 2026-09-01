@@ -26,7 +26,7 @@ try {
   await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
   let nextId=0;const pending=new Map();
   socket.addEventListener('message',event=>{const m=JSON.parse(event.data);const p=pending.get(m.id);if(p){pending.delete(m.id);m.error?p.reject(new Error(m.error.message)):p.resolve(m.result);}});
-  const command=(method,params={})=>new Promise((resolve,reject)=>{const id=++nextId;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
+  const command=(method,params={})=>new Promise((resolve,reject)=>{const id=++nextId,timer=setTimeout(()=>{pending.delete(id);reject(new Error(`Browser command timed out: ${method}`));},10_000);pending.set(id,{resolve:value=>{clearTimeout(timer);resolve(value)},reject:error=>{clearTimeout(timer);reject(error)}});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const result=await command('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true,userGesture:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;};
   const waitFor=async expression=>{for(let i=0;i<100;i++){if(await evaluate(`Boolean(${expression})`))return;await new Promise(r=>setTimeout(r,50));}throw new Error(`UI wait failed: ${expression}`);};
   await command('Page.enable');
@@ -41,6 +41,8 @@ try {
       if(path==='/api/v1/auth/setup'||path==='/api/v1/auth/login'||path==='/api/v1/auth/password')return new Response(JSON.stringify({email:'test@example.invalid',csrf_token:'a'.repeat(64)}),{status:200});
       if(path==='/api/v1/auth/logout')return new Response('{"ok":true}',{status:200});
       if(path==='/api/v1/admin/apps')return Response.json({apps:[{app_id:'minigames-hub',name:'MiniGames Hub'}]});
+      if(path==='/api/v1/admin/notifications')return Response.json({notifications:[{public_id:'22222222-2222-4222-8222-222222222222',app_id:'minigames-hub',event_type:'challenge.created',status:'delivered',device_count:1,delivered_count:1,failed_count:0,created_at:'2026-08-30T12:00:00Z'}]});
+      if(path==='/api/v1/admin/notifications/devices')return Response.json({devices:[{id:'33333333-3333-4333-8333-333333333333',app_id:'minigames-hub',transport:'fcm',platform:'android',permission:'granted',state:'active'}]});
       if(path.endsWith('/decision')&&init.method==='PATCH'){
         if(window.testConflict)return Response.json({error:'decision_conflict'},{status:409});
         const input=JSON.parse(init.body);Object.assign(window.testTicket,{chris_decision:input.chris_decision,decision_destination:input.decision_destination,decision_note:input.decision_note,decision_version:window.testTicket.decision_version+1,decision_updated_at:'2026-08-30T13:00:00Z'});
@@ -69,6 +71,8 @@ try {
   assert.equal(await evaluate(`document.querySelector('#password-button').hidden`),false);
   assert.equal(await evaluate(`window.testRequests.find(r=>r.path.startsWith('/api/v1/admin/feedback')).headers['X-CSRF-Token']`),'a'.repeat(64));
   await waitFor(`document.querySelector('.ticket')`);
+  assert.equal(await evaluate(`document.querySelector('#notification-device-count').textContent`),'1');
+  assert.equal(await evaluate(`document.querySelector('#notification-list').textContent.includes('challenge.created')`),true);
   assert.equal(await evaluate(`document.querySelector('.decision').textContent`),'Chris : À trier');
   await evaluate(`document.querySelector('.ticket').click()`);
   await waitFor(`document.querySelector('#decision-form')`);
@@ -120,5 +124,5 @@ try {
   await waitFor(`document.querySelector('#login-panel').hidden`);
   console.log(JSON.stringify({event:'admin_ui_test',status:'ok',mobile_width:390,desktop_width:1440,screenshot:join(profile,'admin-login-mobile.png'),decision_screenshot:join(profile,'admin-decision-mobile.png')}));
 } finally {
-  socket?.close();browser.kill();await new Promise(resolve=>server.close(resolve));
+  socket?.close();browser.kill();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
 }

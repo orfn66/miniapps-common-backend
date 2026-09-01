@@ -34,6 +34,13 @@
     </form>
     <p id="notice" role="status">Configurez un jeton de service limité pour charger les tickets.</p>
     <section id="tickets" class="tickets" aria-live="polite"></section>
+    <section class="notification-admin" aria-labelledby="notification-heading">
+      <h2 id="notification-heading">Livraisons de notifications</h2>
+      <p>Vue technique uniquement : aucun contenu ni token d’appareil n’est affiché.</p>
+      <div class="summary"><article><span>Appareils inscrits</span><strong id="notification-device-count">—</strong></article><article><span>Livraisons visibles</span><strong id="notification-message-count">—</strong></article><article><span>Échecs</span><strong id="notification-failure-count">—</strong></article></div>
+      <p id="notification-notice" role="status"></p>
+      <section id="notification-list" class="tickets" aria-live="polite"></section>
+    </section>
     </div>
   </main>
   <dialog id="password-dialog"><button class="close" aria-label="Fermer">×</button><h2>Changer le mot de passe</h2><form id="password-form"><label>Mot de passe actuel<input name="current_password" type="password" autocomplete="current-password" required></label><label>Nouveau mot de passe (15 caractères minimum)<input name="password" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label><label>Confirmer<input name="confirmation" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label><button type="submit">Enregistrer et fermer les autres sessions</button></form><p id="password-notice" role="status"></p></dialog>

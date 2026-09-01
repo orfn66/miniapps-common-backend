@@ -51,6 +51,35 @@ paths:
         - {in: header, name: X-Attachment-Consent, required: true, schema: {type: string, const: 'true'}}
       requestBody: {required: true, content: {image/jpeg: {}, image/png: {}, image/webp: {}}}
       responses: {'201': {description: Créée}, '413': {description: Plus de 5 Mio}, '415': {description: Format invalide}}
+  /notifications/devices:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Inscrit ou renouvelle une capacité push dans l'application autorisée
+      description: Scope notifications:devices:write. Références pseudonymisées côté serveur ; token/subscription chiffré et jamais retourné.
+      responses: {'200': {description: Inscription active ou permission refusée}, '400': {description: Entrée ou application refusée}, '403': {description: Scope absent}}
+  /notifications/devices/{id}:
+    delete:
+      security: [{bearerAuth: []}]
+      summary: Révoque un appareil dans le périmètre applicatif du compte
+      parameters: [{in: path, name: id, required: true, schema: {type: string, format: uuid}}]
+      responses: {'200': {description: Désactivé}, '403': {description: Scope absent}, '404': {description: Hors périmètre ou inconnu}}
+  /notifications/messages:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Met en file une notification décidée par l'application source
+      description: Scope notifications:send, application autorisée et Idempotency-Key obligatoires. Le payload est borné puis chiffré ; aucune logique métier centrale.
+      parameters: [{in: header, name: Idempotency-Key, required: true, schema: {type: string, minLength: 8, maxLength: 128}}]
+      responses: {'202': {description: Mise en file}, '200': {description: Rejeu idempotent}, '409': {description: Même clé avec contenu différent}}
+  /admin/notifications:
+    get:
+      security: [{bearerAuth: []}, {humanSession: []}]
+      summary: Livraisons techniques autorisées, sans contenu ni capacité
+      responses: {'200': {description: 200 dernières notifications}, '403': {description: Scope notifications:read absent}}
+  /admin/notifications/devices:
+    get:
+      security: [{bearerAuth: []}, {humanSession: []}]
+      summary: Appareils techniques autorisés, sans token ni identité
+      responses: {'200': {description: 200 derniers appareils}, '403': {description: Scope notifications:read absent}}
   /admin/apps:
     get: {security: [{bearerAuth: []}], summary: Registre autorisé (apps:read), responses: {'200': {description: OK}}}
     post: {security: [{bearerAuth: []}], summary: Enregistre une app (apps:write), responses: {'200': {description: Créée ou mise à jour}}}

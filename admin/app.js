@@ -29,8 +29,21 @@ async function load() {
     const select=filters.elements.app_id, selected=select.value; select.innerHTML='<option value="">Toutes</option>'+apps.apps.map(app=>`<option value="${escapeHtml(app.app_id)}">${escapeHtml(app.name)}</option>`).join(''); select.value=selected;
     document.querySelector('#app-count').textContent=apps.apps.length; document.querySelector('#ticket-count').textContent=data.feedback.length; document.querySelector('#new-count').textContent=data.feedback.filter(item=>item.status==='new').length;
     ticketsRoot.innerHTML=data.feedback.length ? data.feedback.map(item=>`<button class="ticket" data-id="${item.public_id}"><span class="app">${escapeHtml(item.app_name)}</span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.message)}</span><small><b class="kind">${escapeHtml(item.type)}</b><b class="priority ${item.priority}">${escapeHtml(item.priority)}</b><b class="status">${labels[item.status]||item.status}</b><b class="decision">Chris : ${escapeHtml(decisionLabels[item.chris_decision]||'À trier')}</b> · ${escapeHtml(item.client_version)} · ${new Date(item.created_at).toLocaleString('fr-BE')}${item.attachment_count ? ` · 📎 ${item.attachment_count}`:''}</small></button>`).join('') : '<p class="empty">Aucun ticket dans ce filtre.</p>';
-    notice.textContent='';
+    notice.textContent='';await loadNotifications();
   } catch(error) { notice.textContent=`Accès impossible : ${error.message}`; if(error.message==='unauthorized'){await clearAccess();loginNotice.textContent='Votre session a expiré. Reconnectez-vous.';} }
+}
+async function loadNotifications() {
+  const root=document.querySelector('#notification-list'),notificationNotice=document.querySelector('#notification-notice');
+  try {
+    const [messages,devices]=await Promise.all([api('/notifications'),api('/notifications/devices')]);
+    document.querySelector('#notification-device-count').textContent=devices.devices.length;
+    document.querySelector('#notification-message-count').textContent=messages.notifications.length;
+    document.querySelector('#notification-failure-count').textContent=messages.notifications.filter(item=>['failed','partial'].includes(item.status)).length;
+    root.innerHTML=messages.notifications.length?messages.notifications.map(item=>`<article class="ticket"><span class="app">${escapeHtml(item.app_id)}</span><strong>${escapeHtml(item.event_type)}</strong><span>Statut : ${escapeHtml(item.status)}</span><small>${Number(item.delivered_count)}/${Number(item.device_count)} livré(s) · ${Number(item.failed_count)} échec(s) · ${new Date(item.created_at).toLocaleString('fr-BE')}</small></article>`).join(''):'<p class="empty">Aucune livraison visible.</p>';
+    notificationNotice.textContent='';
+  } catch(error) {
+    root.replaceChildren();notificationNotice.textContent=error.message==='forbidden'?'Votre compte ne possède pas le scope notifications:read.':`Livraisons indisponibles : ${error.message}`;
+  }
 }
 async function openTicket(id) {
   try {

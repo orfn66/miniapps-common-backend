@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
 import { createMemaHandler } from './mema-server.js';
+import { createNotificationHandler } from './notification-service.js';
 import { createPasswordAuth, sessionMutationAllowed } from "./password-auth.js";
 import { canEditDecision, changeDecision, decisionSelect, hasDecisionFields } from './decision.js';
 import { hashToken, issueInstallationCredential, validateApplication, validateFeedback, validateInstallation, validatePlaySession, validateStatusTransition } from "./domain.js";
@@ -49,6 +50,7 @@ async function authenticateBearer(request) {
   return service.rowCount ? { kind: "service", ...service.rows[0] } : null;
 }
 const handleMema = createMemaHandler({ pool, reply, readJson, readBinary, attachmentDirectory, rateAllowed });
+const handleNotifications = createNotificationHandler({ pool, reply, readJson });
 const requireService = (actor, scope) => actor?.kind === "service" && actor.scopes.includes(scope);
 const passwordAuth = createPasswordAuth({ pool, readJson, reply, authenticateBearer });
 async function authenticate(request) {
@@ -146,6 +148,9 @@ const server = createServer(async (request, response) => {
       status = 403; return reply(response, status, { error: 'csrf_invalid' }, origin);
     }
     if (!rateAllowed(`${actor.kind}:${actor.id}`, actor.kind === "service" ? 300 : 60)) { status = 429; return reply(response, status, { error: "rate_limited" }, origin); }
+
+    const notificationStatus = await handleNotifications(request, response, url, origin, actor);
+    if (notificationStatus !== null) { status = notificationStatus; return; }
 
     if (request.method === "POST" && url.pathname === "/api/v1/feedback" && actor.kind === "installation") {
       const input = validateFeedback(await readJson(request)); if (!input) { status = 400; return reply(response, status, { error: "input_invalid" }, origin); }

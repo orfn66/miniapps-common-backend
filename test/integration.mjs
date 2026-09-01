@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import pg from "pg";
 import { hashToken } from "../src/domain.js";
+import { processNotificationBatch } from '../src/notification-service.js';
 import { testDecisions } from './decision.integration.mjs';
 
 const adminUrl = process.env.TEST_DATABASE_URL || "postgresql://postgres:postgres@127.0.0.1:5432/app_platform_test";
@@ -19,6 +20,8 @@ if (!['127.0.0.1','localhost'].includes(databaseHost) || !databaseName.startsWit
 const apiPort = process.env.TEST_API_PORT || "3100";
 const apiOrigin = `http://127.0.0.1:${apiPort}`;
 const runtimePassword = "runtime-integration-only";
+const notificationEncryptionKey = Buffer.alloc(32, 17).toString('base64');
+const notificationIdentitySecret = 'integration-notification-identity-secret-2026';
 const directory = await mkdtemp(join(tmpdir(), "app-platform-integration-"));
 const admin = new pg.Client({ connectionString: adminUrl });
 let server;
@@ -59,8 +62,10 @@ try {
   assert.deepEqual(registry.rows, [{ slug: "mema", status: "active", active: true }, { slug: "minigames-hub", status: "active", active: true }, { slug: "perfect-tap", status: "archived", active: false }]);
 
   const adminToken = randomBytes(48).toString("base64url"), codexToken = randomBytes(48).toString("base64url");
-  await admin.query("INSERT INTO service_accounts(name,token_hash,scopes,app_ids) VALUES('integration-admin',$1,$2,NULL),('codex-reader',$3,$4,ARRAY['minigames-hub'])", [hashToken(adminToken), ["apps:read","apps:write","feedback:read","feedback:write","attachments:read","attachments:delete","logs:read"], hashToken(codexToken), ["apps:read","feedback:read","attachments:read","logs:read"]]);
-  server = spawn(process.execPath, ["src/server.js"], { stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, PGHOST: databaseHost, PGPORT: databasePort, PGDATABASE: databaseName, PGUSER: "miniapps_api", PGPASSWORD: runtimePassword, PORT: apiPort, ATTACHMENTS_DIR: directory, CORS_ALLOWED_ORIGINS: "http://localhost" } });
+  await admin.query("INSERT INTO service_accounts(name,token_hash,scopes,app_ids) VALUES('integration-admin',$1,$2,NULL),('codex-reader',$3,$4,ARRAY['minigames-hub'])", [hashToken(adminToken), ["apps:read","apps:write","feedback:read","feedback:write","attachments:read","attachments:delete","logs:read","notifications:read"], hashToken(codexToken), ["apps:read","feedback:read","attachments:read","logs:read"]]);
+  const hubNotificationToken=randomBytes(48).toString('base64url'),memaNotificationToken=randomBytes(48).toString('base64url');
+  await admin.query("INSERT INTO service_accounts(name,token_hash,scopes,app_ids) VALUES('hub-notifications',$1,$2,ARRAY['minigames-hub']),('mema-notifications',$3,$2,ARRAY['mema'])", [hashToken(hubNotificationToken), ['notifications:devices:write','notifications:send','notifications:read'], hashToken(memaNotificationToken)]);
+  server = spawn(process.execPath, ["src/server.js"], { stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, PGHOST: databaseHost, PGPORT: databasePort, PGDATABASE: databaseName, PGUSER: "miniapps_api", PGPASSWORD: runtimePassword, PORT: apiPort, ATTACHMENTS_DIR: directory, CORS_ALLOWED_ORIGINS: "http://localhost", NOTIFICATION_TOKEN_ENCRYPTION_KEY:notificationEncryptionKey, NOTIFICATION_IDENTITY_HMAC_SECRET:notificationIdentitySecret } });
   await waitForHealth();
   assert.equal((await fetch(`${apiOrigin}/admin`)).status, 200);
   const installation = await json("/api/v1/installations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app_id: "minigames-hub", client_version: "0.1.0" }) });
@@ -80,6 +85,52 @@ try {
   assert.deepEqual(outsideScope.body.feedback, []);
   assert.equal((await json(`/api/v1/admin/feedback/${ticket.body.feedback.public_id}`, { method: "PATCH", headers: { ...adminHeaders, "content-type": "application/json" }, body: JSON.stringify({ status: "to_analyze" }) })).response.status, 200);
   assert.equal((await json("/api/v1/admin/logs", { headers: codexHeaders })).response.status, 200);
+
+  // The same notification API serves both apps, while app-scoped credentials
+  // cannot register or target another application's devices.
+  const hubNotificationHeaders={authorization:`Bearer ${hubNotificationToken}`,'content-type':'application/json'};
+  const memaNotificationHeaders={authorization:`Bearer ${memaNotificationToken}`,'content-type':'application/json'};
+  const hubDevice={app_id:'minigames-hub',recipient_reference:'player-2',device_reference:'android-test-001',transport:'fcm',platform:'android',permission:'granted',capability:'fcm-test-token-'.padEnd(64,'x')};
+  const hubRegistration=await json('/api/v1/notifications/devices',{method:'POST',headers:hubNotificationHeaders,body:JSON.stringify(hubDevice)});
+  assert.equal(hubRegistration.response.status,200);
+  assert.equal((await json('/api/v1/notifications/devices',{method:'POST',headers:memaNotificationHeaders,body:JSON.stringify(hubDevice)})).response.status,400);
+  const memaDevice={app_id:'mema',recipient_reference:'parent-1',device_reference:'pwa-test-001',transport:'web_push',platform:'pwa',permission:'granted',capability:{endpoint:'https://push.example.invalid/mema-test',expirationTime:null,keys:{p256dh:'p'.repeat(32),auth:'a'.repeat(16)}}};
+  assert.equal((await json('/api/v1/notifications/devices',{method:'POST',headers:memaNotificationHeaders,body:JSON.stringify(memaDevice)})).response.status,200);
+  const hubMessage={app_id:'minigames-hub',event_type:'challenge.created',recipient_reference:'player-2',notification:{title:'Nouveau défi',body:'Un ami vous a lancé un défi.',data:{challenge_id:'challenge-test'}},deep_link:'/challenges/challenge-test'};
+  const messageHeaders={...hubNotificationHeaders,'idempotency-key':'challenge:test:v1'};
+  const queued=await json('/api/v1/notifications/messages',{method:'POST',headers:messageHeaders,body:JSON.stringify(hubMessage)});
+  assert.equal(queued.response.status,202);assert.equal(queued.body.notification.device_count,1);
+  assert.equal((await json('/api/v1/notifications/messages',{method:'POST',headers:messageHeaders,body:JSON.stringify(hubMessage)})).response.status,200);
+  assert.equal((await json('/api/v1/notifications/messages',{method:'POST',headers:messageHeaders,body:JSON.stringify({...hubMessage,event_type:'challenge.changed'})})).response.status,409);
+  assert.equal((await json('/api/v1/admin/notifications',{headers:codexHeaders})).response.status,403);
+  assert.equal((await json('/api/v1/notifications/devices',{method:'POST',headers:codexHeaders,body:JSON.stringify(hubDevice)})).response.status,403);
+  assert.equal((await json('/api/v1/notifications/messages',{method:'POST',headers:{...codexHeaders,'idempotency-key':'reader-write-denied'},body:JSON.stringify(hubMessage)})).response.status,403);
+  assert.equal((await json('/api/v1/admin/notifications',{headers:adminHeaders})).response.status,200);
+  const runtimePool=new pg.Pool({host:databaseHost,port:Number(databasePort),database:databaseName,user:'miniapps_api',password:runtimePassword});
+  process.env.NOTIFICATION_TOKEN_ENCRYPTION_KEY=notificationEncryptionKey;process.env.NOTIFICATION_IDENTITY_HMAC_SECRET=notificationIdentitySecret;
+  let transient=true;
+  const deliveries={fcm:async()=>{if(transient){transient=false;throw Object.assign(new Error('provider_unavailable'),{code:'provider_unavailable'});}return{providerMessageId:'fake-fcm-1'};},web_push:async()=>({providerMessageId:'fake-web-1'})};
+  assert.equal(await processNotificationBatch(runtimePool,{deliveryTransports:deliveries}),1);
+  let delivery=await admin.query('SELECT status,attempt_count,last_error_code FROM notification_deliveries');
+  assert.deepEqual(delivery.rows[0],{status:'pending',attempt_count:1,last_error_code:'provider_unavailable'});
+  await admin.query('UPDATE notification_deliveries SET next_attempt_at=now()');
+  assert.equal(await processNotificationBatch(runtimePool,{deliveryTransports:deliveries}),1);
+  delivery=await admin.query('SELECT status,attempt_count,last_error_code FROM notification_deliveries');
+  assert.deepEqual(delivery.rows[0],{status:'delivered',attempt_count:2,last_error_code:null});
+  assert.equal((await json('/api/v1/notifications/devices',{method:'POST',headers:hubNotificationHeaders,body:JSON.stringify({...hubDevice,device_reference:'permission-denied-001',permission:'denied',capability:null})})).response.status,200);
+  assert.equal((await admin.query("SELECT count(*)::integer AS count FROM notification_devices WHERE device_reference_hash IS NOT NULL")).rows[0].count,2);
+  const deadDevice={...hubDevice,recipient_reference:'dead-player',device_reference:'android-dead-001',capability:'dead-fcm-token-'.padEnd(64,'z')};
+  await json('/api/v1/notifications/devices',{method:'POST',headers:hubNotificationHeaders,body:JSON.stringify(deadDevice)});
+  const deadMessage={...hubMessage,recipient_reference:'dead-player'};
+  await json('/api/v1/notifications/messages',{method:'POST',headers:{...hubNotificationHeaders,'idempotency-key':'challenge:dead:v1'},body:JSON.stringify(deadMessage)});
+  const permanent={...deliveries,fcm:async()=>{throw Object.assign(new Error('UNREGISTERED'),{code:'UNREGISTERED',permanent:true})}};
+  assert.equal(await processNotificationBatch(runtimePool,{deliveryTransports:permanent}),1);
+  assert.equal((await admin.query("SELECT state FROM notification_devices WHERE capability_hash=$1",[(await import('../src/notification-domain.js')).capabilityHash(deadDevice.capability)])).rows[0].state,'invalid');
+  assert.equal((await json(`/api/v1/notifications/devices/${hubRegistration.body.device.id}`,{method:'DELETE',headers:hubNotificationHeaders})).response.status,200);
+  assert.equal((await json(`/api/v1/notifications/devices/${hubRegistration.body.device.id}`,{method:'DELETE',headers:memaNotificationHeaders})).response.status,404);
+  await runtimePool.end();
+  const stored=await admin.query("SELECT position(convert_to($1,'UTF8') in capability_ciphertext)>0 AS leaked FROM notification_devices ORDER BY app_id",[hubDevice.capability]);
+  assert.equal(stored.rows.some(row=>row.leaked),false);
 
   // Password authentication is additive: setup needs a full unrestricted admin bearer.
   const authOrigin = `https://127.0.0.1:${apiPort}`;
