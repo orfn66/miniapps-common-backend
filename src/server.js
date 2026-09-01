@@ -5,6 +5,7 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
+import { createMemaHandler } from './mema-server.js';
 import { createPasswordAuth, sessionMutationAllowed } from "./password-auth.js";
 import { canEditDecision, changeDecision, decisionSelect, hasDecisionFields } from './decision.js';
 import { hashToken, issueInstallationCredential, validateApplication, validateFeedback, validateInstallation, validatePlaySession, validateStatusTransition } from "./domain.js";
@@ -47,6 +48,7 @@ async function authenticateBearer(request) {
   const service = await pool.query("UPDATE service_accounts SET last_used_at=now() WHERE token_hash=$1 AND active=true AND revoked_at IS NULL RETURNING id,name,scopes,app_ids", [tokenHash]);
   return service.rowCount ? { kind: "service", ...service.rows[0] } : null;
 }
+const handleMema = createMemaHandler({ pool, reply, readJson, readBinary, attachmentDirectory, rateAllowed });
 const requireService = (actor, scope) => actor?.kind === "service" && actor.scopes.includes(scope);
 const passwordAuth = createPasswordAuth({ pool, readJson, reply, authenticateBearer });
 async function authenticate(request) {
@@ -91,10 +93,10 @@ async function purgeExpiredAttachments() {
 function listFilters(url, actor) {
   const clauses = [], values = [];
   const add = (sql, value) => { values.push(value); clauses.push(sql.replace("?", `$${values.length}`)); };
-  for (const [parameter, column] of [["app_id", "i.game_slug"], ["type", "f.type"], ["status", "f.status"], ["priority", "f.priority"], ["version", "f.client_version"], ["chris_decision", "f.chris_decision"]]) if (url.searchParams.get(parameter)) add(`${column} = ?`, url.searchParams.get(parameter));
+  for (const [parameter, column] of [["app_id", "coalesce(i.game_slug,f.source_app)"], ["type", "f.type"], ["status", "f.status"], ["priority", "f.priority"], ["version", "f.client_version"], ["chris_decision", "f.chris_decision"]]) if (url.searchParams.get(parameter)) add(`${column} = ?`, url.searchParams.get(parameter));
   if (url.searchParams.get("from")) add("f.created_at >= ?::timestamptz", url.searchParams.get("from"));
   if (url.searchParams.get("to")) add("f.created_at < ?::timestamptz + interval '1 day'", url.searchParams.get("to"));
-  if (actor.app_ids !== null) add("i.game_slug = ANY(?::text[])", actor.app_ids);
+  if (actor.app_ids !== null) add("coalesce(i.game_slug,f.source_app) = ANY(?::text[])", actor.app_ids);
   return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", values };
 }
 async function sendAdminAsset(response, pathname) {
@@ -136,6 +138,8 @@ const server = createServer(async (request, response) => {
       status = 201; return reply(response, status, { installation_id: credential.id, token: credential.token }, origin);
     }
 
+    const memaStatus = await handleMema(request, response, url, origin);
+    if (memaStatus !== null) { status = memaStatus; return; }
     const actor = await authenticate(request);
     if (!actor) { status = 401; return reply(response, status, { error: "unauthorized" }, origin); }
     if (actor.session_hash && !['GET','HEAD','OPTIONS'].includes(request.method) && !sessionMutationAllowed(request)) {
@@ -199,12 +203,12 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/v1/admin/feedback" && requireService(actor, "feedback:read")) {
       const { where, values } = listFilters(url, actor);
-      const result = await pool.query(`SELECT f.public_id,${decisionSelect},f.type,f.title,f.comment AS message,f.priority,f.status,f.client_version,f.client_occurred_at,f.route,f.device,f.os,f.browser,f.resolution,f.technical_context,f.created_at,f.updated_at,i.game_slug AS app_id,g.name AS app_name,(SELECT count(*)::integer FROM feedback_attachments a WHERE a.feedback_id=f.id AND a.deleted_at IS NULL) AS attachment_count FROM feedback f JOIN installations i ON i.id=f.installation_id JOIN games g ON g.slug=i.game_slug ${where} ORDER BY f.created_at DESC LIMIT 500`, values);
+      const result = await pool.query(`SELECT f.public_id,${decisionSelect},f.type,f.title,f.comment AS message,f.priority,f.status,f.client_version,f.client_occurred_at,f.route,f.device,f.os,f.browser,f.resolution,f.technical_context,f.created_at,f.updated_at,coalesce(i.game_slug,f.source_app) AS app_id,g.name AS app_name,(SELECT count(*)::integer FROM feedback_attachments a WHERE a.feedback_id=f.id AND a.deleted_at IS NULL) AS attachment_count FROM feedback f LEFT JOIN installations i ON i.id=f.installation_id JOIN games g ON g.slug=coalesce(i.game_slug,f.source_app) ${where} ORDER BY f.created_at DESC LIMIT 500`, values);
       status = 200; return reply(response, status, { feedback: result.rows }, origin);
     }
     const ticketMatch = /^\/api\/v1\/admin\/feedback\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (request.method === "GET" && ticketMatch && requireService(actor, "feedback:read")) {
-      const result = await pool.query(`SELECT f.id,f.public_id,${decisionSelect},f.type,f.title,f.comment AS message,f.priority,f.status,f.client_version,f.client_occurred_at,f.route,f.device,f.os,f.browser,f.resolution,f.technical_context,f.created_at,f.updated_at,i.game_slug AS app_id,g.name AS app_name FROM feedback f JOIN installations i ON i.id=f.installation_id JOIN games g ON g.slug=i.game_slug WHERE f.public_id=$1`, [ticketMatch[1]]);
+      const result = await pool.query(`SELECT f.id,f.public_id,${decisionSelect},f.type,f.title,f.comment AS message,f.priority,f.status,f.client_version,f.client_occurred_at,f.route,f.device,f.os,f.browser,f.resolution,f.technical_context,f.created_at,f.updated_at,coalesce(i.game_slug,f.source_app) AS app_id,g.name AS app_name FROM feedback f LEFT JOIN installations i ON i.id=f.installation_id JOIN games g ON g.slug=coalesce(i.game_slug,f.source_app) WHERE f.public_id=$1`, [ticketMatch[1]]);
       if (!result.rowCount || !serviceCanAccessApp(actor, result.rows[0].app_id)) { status = 404; return reply(response, status, { error: "feedback_not_found" }, origin); }
       const [history, attachments, decisions] = await Promise.all([
         pool.query("SELECT from_status,to_status,changed_by,note,created_at FROM feedback_status_history WHERE feedback_id=$1 ORDER BY created_at", [result.rows[0].id]),
@@ -223,7 +227,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "PATCH" && ticketMatch && requireService(actor, "feedback:write")) {
       const input = await readJson(request);
       if (hasDecisionFields(input)) { status = 400; return reply(response, status, { error: 'decision_endpoint_required' }, origin); }
-      const current = await pool.query("SELECT f.id,f.status,i.game_slug AS app_id FROM feedback f JOIN installations i ON i.id=f.installation_id WHERE f.public_id=$1", [ticketMatch[1]]);
+      const current = await pool.query("SELECT f.id,f.status,coalesce(i.game_slug,f.source_app) AS app_id FROM feedback f LEFT JOIN installations i ON i.id=f.installation_id WHERE f.public_id=$1", [ticketMatch[1]]);
       if (!current.rowCount || !serviceCanAccessApp(actor, current.rows[0].app_id)) { status = 404; return reply(response, status, { error: "feedback_not_found" }, origin); }
       if (!validateStatusTransition(current.rows[0].status, input.status)) { status = 409; return reply(response, status, { error: "status_transition_invalid" }, origin); }
       const updated = await pool.query("UPDATE feedback SET status=$2::varchar(24),updated_at=now(),closed_at=CASE WHEN $2::text='closed' THEN now() ELSE NULL END WHERE id=$1 RETURNING public_id,status,updated_at", [current.rows[0].id, input.status]);
@@ -232,12 +236,12 @@ const server = createServer(async (request, response) => {
     }
     const fileMatch = /^\/api\/v1\/admin\/attachments\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (request.method === "GET" && fileMatch && requireService(actor, "attachments:read")) {
-      const result = await pool.query("SELECT a.storage_name,a.original_name,a.media_type,a.byte_size,i.game_slug AS app_id FROM feedback_attachments a JOIN feedback f ON f.id=a.feedback_id JOIN installations i ON i.id=f.installation_id WHERE a.id=$1 AND a.deleted_at IS NULL", [fileMatch[1]]);
+      const result = await pool.query("SELECT a.storage_name,a.original_name,a.media_type,a.byte_size,coalesce(i.game_slug,f.source_app) AS app_id FROM feedback_attachments a JOIN feedback f ON f.id=a.feedback_id LEFT JOIN installations i ON i.id=f.installation_id WHERE a.id=$1 AND a.deleted_at IS NULL", [fileMatch[1]]);
       if (!result.rowCount || !serviceCanAccessApp(actor, result.rows[0].app_id)) { status = 404; return reply(response, status, { error: "attachment_not_found" }, origin); }
       await audit(actor, "attachment.download", "attachment", fileMatch[1]); status = 200; response.writeHead(status, { ...headers(result.rows[0].media_type), "content-length": result.rows[0].byte_size, "content-disposition": `attachment; filename="${safeFilename(result.rows[0].original_name) || "capture"}"` }); return createReadStream(join(attachmentDirectory, result.rows[0].storage_name)).pipe(response);
     }
     if (request.method === "DELETE" && fileMatch && requireService(actor, "attachments:delete")) {
-      const result = await pool.query("SELECT a.id,a.storage_name,i.game_slug AS app_id FROM feedback_attachments a JOIN feedback f ON f.id=a.feedback_id JOIN installations i ON i.id=f.installation_id WHERE a.id=$1 AND a.deleted_at IS NULL", [fileMatch[1]]);
+      const result = await pool.query("SELECT a.id,a.storage_name,coalesce(i.game_slug,f.source_app) AS app_id FROM feedback_attachments a JOIN feedback f ON f.id=a.feedback_id LEFT JOIN installations i ON i.id=f.installation_id WHERE a.id=$1 AND a.deleted_at IS NULL", [fileMatch[1]]);
       if (!result.rowCount || !serviceCanAccessApp(actor, result.rows[0].app_id)) { status = 404; return reply(response, status, { error: "attachment_not_found" }, origin); }
       await unlink(join(attachmentDirectory, result.rows[0].storage_name)).catch((error) => { if (error.code !== "ENOENT") throw error; }); await pool.query("UPDATE feedback_attachments SET deleted_at=now() WHERE id=$1", [result.rows[0].id]); await audit(actor, "attachment.delete", "attachment", fileMatch[1]); status = 204; response.writeHead(status, headers("application/json")); return response.end();
     }
@@ -246,7 +250,7 @@ const server = createServer(async (request, response) => {
       if (targetId) { values.push(targetId); clauses.push(`l.target_id=$${values.length}`); }
       if (actor.app_ids !== null) {
         values.push(actor.app_ids); const index = values.length;
-        clauses.push(`((l.target_type='app' AND l.target_id=ANY($${index}::text[])) OR (l.target_type='feedback' AND EXISTS(SELECT 1 FROM feedback f JOIN installations i ON i.id=f.installation_id WHERE f.public_id::text=l.target_id AND i.game_slug=ANY($${index}::text[]))) OR (l.target_type='attachment' AND EXISTS(SELECT 1 FROM feedback_attachments a JOIN feedback f ON f.id=a.feedback_id JOIN installations i ON i.id=f.installation_id WHERE a.id::text=l.target_id AND i.game_slug=ANY($${index}::text[]))))`);
+        clauses.push(`((l.target_type='app' AND l.target_id=ANY($${index}::text[])) OR (l.target_type='feedback' AND EXISTS(SELECT 1 FROM feedback f LEFT JOIN installations i ON i.id=f.installation_id WHERE f.public_id::text=l.target_id AND coalesce(i.game_slug,f.source_app)=ANY($${index}::text[]))) OR (l.target_type='attachment' AND EXISTS(SELECT 1 FROM feedback_attachments a JOIN feedback f ON f.id=a.feedback_id LEFT JOIN installations i ON i.id=f.installation_id WHERE a.id::text=l.target_id AND coalesce(i.game_slug,f.source_app)=ANY($${index}::text[]))))`);
       }
       const result = await pool.query(`SELECT l.actor,l.action,l.target_type,l.target_id,l.details,l.created_at FROM platform_audit_log l ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY l.created_at DESC LIMIT 200`, values); status = 200; return reply(response, status, { logs: result.rows }, origin);
     }

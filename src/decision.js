@@ -36,8 +36,8 @@ export async function changeDecision(pool, actor, publicId, input) {
   try {
     await client.query('BEGIN');
     const current = await client.query(`SELECT f.id,f.public_id,${decisionSelect}
-      FROM feedback f JOIN installations i ON i.id=f.installation_id
-      WHERE f.public_id=$1 AND ($2::text[] IS NULL OR i.game_slug=ANY($2::text[])) FOR UPDATE OF f`, [publicId, actor.app_ids]);
+      FROM feedback f LEFT JOIN installations i ON i.id=f.installation_id
+      WHERE f.public_id=$1 AND ($2::text[] IS NULL OR coalesce(i.game_slug,f.source_app)=ANY($2::text[])) FOR UPDATE OF f`, [publicId, actor.app_ids]);
     if (!current.rowCount) {
       await client.query('ROLLBACK'); return { status: 404, body: { error: 'feedback_not_found' } };
     }

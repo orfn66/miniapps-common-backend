@@ -56,7 +56,7 @@ try {
   const converted = await admin.query("SELECT type,status,title FROM feedback WHERE installation_id=$1", [legacyInstallation]);
   assert.deepEqual(converted.rows[0], { type: "review", status: "to_analyze", title: "Avis utilisateur" });
   const registry = await admin.query("SELECT slug,status,active FROM games ORDER BY slug");
-  assert.deepEqual(registry.rows, [{ slug: "minigames-hub", status: "active", active: true }, { slug: "perfect-tap", status: "archived", active: false }]);
+  assert.deepEqual(registry.rows, [{ slug: "mema", status: "active", active: true }, { slug: "minigames-hub", status: "active", active: true }, { slug: "perfect-tap", status: "archived", active: false }]);
 
   const adminToken = randomBytes(48).toString("base64url"), codexToken = randomBytes(48).toString("base64url");
   await admin.query("INSERT INTO service_accounts(name,token_hash,scopes,app_ids) VALUES('integration-admin',$1,$2,NULL),('codex-reader',$3,$4,ARRAY['minigames-hub'])", [hashToken(adminToken), ["apps:read","apps:write","feedback:read","feedback:write","attachments:read","attachments:delete","logs:read"], hashToken(codexToken), ["apps:read","feedback:read","attachments:read","logs:read"]]);

@@ -17,6 +17,7 @@
     "test:preprod": "node scripts/smoke-preprod.mjs"
   },
   "dependencies": {
-    "pg": "8.23.0"
+    "pg": "8.23.0",
+    "web-push": "^3.6.7"
   }
 }
