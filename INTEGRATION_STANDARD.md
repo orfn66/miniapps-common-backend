@@ -108,3 +108,10 @@ Ne jamais envoyer : mot de passe, cookie, jeton, clé API, en-tête Authorizatio
 5. Applications métier ou contenant des données personnelles uniquement avec une validation dédiée.
 
 Un système existant n’est jamais remplacé automatiquement. L’intégration peut rester parallèle, désactivée par configuration et réversible pendant toute la période d’observation.
+
+
+## 9. Connecteur Velocoon
+
+Velocoon conserve ses retours et captures dans son projet Supabase. Le connecteur `POST /api/v1/integrations/velocoon/feedback` reçoit uniquement une copie minimale des nouveaux tickets. Il valide le JWT utilisateur auprès de Supabase Auth avec `VELOCOON_SUPABASE_URL` et `VELOCOON_SUPABASE_PUBLISHABLE_KEY`, puis pseudonymise l'UUID utilisateur avec `INTEGRATION_HASH_SECRET`.
+
+L'UUID du ticket source est la clé d'idempotence et la contrainte `(source_app, source_feedback_id)` empêche les doublons. Aucun accès aux tables métier Velocoon, aucune clé `service_role`, aucun chemin Storage et aucune pièce jointe ne sont utilisés. Avant activation, configurer l'origine Velocoon dans `CORS_ALLOWED_ORIGINS`; sans ces variables, le point d'entrée refuse l'authentification.
