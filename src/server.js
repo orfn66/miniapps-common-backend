@@ -7,6 +7,7 @@ import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
 import { createMemaHandler } from './mema-server.js';
 import { createNotificationHandler } from './notification-service.js';
+import { createVelocoonHandler } from './velocoon-server.js';
 import { createPasswordAuth, sessionMutationAllowed } from "./password-auth.js";
 import { canEditDecision, changeDecision, decisionSelect, hasDecisionFields } from './decision.js';
 import { hashToken, issueInstallationCredential, validateApplication, validateFeedback, validateInstallation, validatePlaySession, validateStatusTransition } from "./domain.js";
@@ -51,6 +52,7 @@ async function authenticateBearer(request) {
 }
 const handleMema = createMemaHandler({ pool, reply, readJson, readBinary, attachmentDirectory, rateAllowed });
 const handleNotifications = createNotificationHandler({ pool, reply, readJson });
+const handleVelocoon = createVelocoonHandler({ pool, reply, readJson, rateAllowed });
 const requireService = (actor, scope) => actor?.kind === "service" && actor.scopes.includes(scope);
 const passwordAuth = createPasswordAuth({ pool, readJson, reply, authenticateBearer });
 async function authenticate(request) {
@@ -142,6 +144,8 @@ const server = createServer(async (request, response) => {
 
     const memaStatus = await handleMema(request, response, url, origin);
     if (memaStatus !== null) { status = memaStatus; return; }
+    const velocoonStatus = await handleVelocoon(request, response, url, origin);
+    if (velocoonStatus !== null) { status = velocoonStatus; return; }
     const actor = await authenticate(request);
     if (!actor) { status = 401; return reply(response, status, { error: "unauthorized" }, origin); }
     if (actor.session_hash && !['GET','HEAD','OPTIONS'].includes(request.method) && !sessionMutationAllowed(request)) {
